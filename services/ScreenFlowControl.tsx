@@ -26,7 +26,7 @@ import AlbumsOverviewScreen from "../screens/AlbumsOverviewScreen";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleAlbumStackScreen, { type StackProject } from "../screens/SingleAlbumStackScreen";
-import { fetchRandomAlbumsByGenre } from "./spotifyFetchService";
+import { fetchRandomAlbumsByGenre } from "./musicBrainzFetchService";
 
 type OverviewMode = "all" | "my_albums";
 type SavedAlbumDictionary = {
@@ -48,17 +48,23 @@ export default function ScreenFlowControl() {
   const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
   const [focusedSectionIndex, setFocusedSectionIndex] = useState<number | null>(null);
   const [savedAlbumsSet, setSavedAlbumsSet] = useState<Record<string, SavedAlbumDictionary>>({});
-  const [spotifySections, setSpotifySections] = useState<GenreAlbumSection[]>([]);
+  const [musicBrainzSections, setMusicBrainzSections] = useState<GenreAlbumSection[]>([]);
 
   const focusedSectionRef = useRef<number | null>(null);
   const backGestureTriggered = useSharedValue(false);
 
   const layout = useMemo(() => buildAlbumWorldLayout(width, height), [height, width]);
   const activeAlbumStacks = useMemo(
-    () => (spotifySections.length > 0 ? createAlbumStacksFromGenreSections(spotifySections) : albumStacks),
-    [spotifySections]
+    () =>
+      musicBrainzSections.length > 0
+        ? createAlbumStacksFromGenreSections(musicBrainzSections)
+        : albumStacks,
+    [musicBrainzSections]
   );
-  const sectionGenres = useMemo(() => spotifySections.map((section) => section.genre), [spotifySections]);
+  const sectionGenres = useMemo(
+    () => musicBrainzSections.map((section) => section.genre),
+    [musicBrainzSections]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -66,11 +72,11 @@ export default function ScreenFlowControl() {
     fetchRandomAlbumsByGenre()
       .then((result) => {
         if (!cancelled) {
-          setSpotifySections(result.genreSections);
+          setMusicBrainzSections(result.genreSections);
         }
       })
       .catch((error) => {
-        console.warn("Spotify album fetch failed; using fallback album stacks.", error);
+        console.warn("MusicBrainz album fetch failed; using fallback album stacks.", error);
       });
 
     return () => {

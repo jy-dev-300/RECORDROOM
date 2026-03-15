@@ -84,7 +84,7 @@ export function createAlbumStackFromAlbum(album: Album, stackIndex: number): Alb
   const media = getAlbumArt(album);
 
   return {
-    id: `spotify-stack-${album.id}`,
+    id: `musicbrainz-stack-${album.id}`,
     projects: Array.from({ length: 5 }, (_, cardIndex) => ({
       id: `${album.id}-card-${cardIndex + 1}`,
       title: getAlbumTitle(album),

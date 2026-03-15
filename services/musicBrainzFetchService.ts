@@ -1,6 +1,6 @@
 import type { Album } from "../data/albumsData";
 import { config } from "./config";
-import type { GenreAlbumSection } from "./spotifyRandomAlbums";
+import type { GenreAlbumSection } from "./musicBrainzRandomAlbums";
 
 type RandomAlbumsResponse = {
   genres: string[];
@@ -17,9 +17,7 @@ function getApiUrl(path: string) {
 }
 
 export async function fetchRandomAlbumsByGenre() {
-  const response = await fetch(
-    getApiUrl(`/api/spotify/random-albums?market=${encodeURIComponent(config.spotify.market)}`)
-  );
+  const response = await fetch(getApiUrl("/api/musicbrainz/random-albums"));
 
   if (!response.ok) {
     const body = await response.text();
