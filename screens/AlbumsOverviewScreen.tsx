@@ -27,6 +27,7 @@ import Partition16Screen from "./Partition16Screen";
 type AlbumsOverviewScreenProps = {
   layout: AlbumWorldLayout;
   sections: AlbumStack[][];
+  sectionGenres?: string[];
   focusedSectionIndex?: number | null;
   isMyAlbumsView?: boolean;
   onPressMyAlbums?: () => void;
@@ -48,6 +49,14 @@ const FOCUSED_SECTION_VERTICAL_PADDING = 16;
 const FOCUSED_SECTION_UPWARD_SHIFT_RATIO = -0.04;
 const OVERVIEW_UPWARD_SHIFT_RATIO = 0.05;
 const PARTITION_TOUCH_SLOP_Y = 18;
+const SECTION_LABEL_OFFSET = 22;
+
+function formatGenreLabel(genre: string) {
+  return genre
+    .split("-")
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
 
 function getSectionFrame(layout: AlbumWorldLayout, sectionIndex: number): SectionFrame {
   const row = Math.floor(sectionIndex / SECTIONS_PER_ROW);
@@ -72,6 +81,7 @@ type AnimatedSectionProps = {
   layout: AlbumWorldLayout;
   section: AlbumStack[];
   sectionIndex: number;
+  sectionGenre?: string;
   activeSectionIndex: number | null;
   focusProgress: SharedValue<number>;
   overlayOpacity: SharedValue<number>;
@@ -83,6 +93,7 @@ function AnimatedSection({
   layout,
   section,
   sectionIndex,
+  sectionGenre,
   activeSectionIndex,
   focusProgress,
   overlayOpacity,
@@ -121,6 +132,11 @@ function AnimatedSection({
 
   return (
     <Animated.View style={animatedStyle}>
+      {sectionGenre ? (
+        <View pointerEvents="none" style={styles.sectionLabelWrap}>
+          <Text style={styles.sectionLabel}>{formatGenreLabel(sectionGenre)}</Text>
+        </View>
+      ) : null}
       <Pressable
         disabled={activeSectionIndex != null}
         hitSlop={{ top: PARTITION_TOUCH_SLOP_Y, bottom: PARTITION_TOUCH_SLOP_Y, left: 0, right: 0 }}
@@ -144,6 +160,7 @@ function AnimatedSection({
 export default function AlbumsOverviewScreen({
   layout,
   sections,
+  sectionGenres = [],
   focusedSectionIndex = null,
   isMyAlbumsView = false,
   onPressMyAlbums,
@@ -219,6 +236,7 @@ export default function AlbumsOverviewScreen({
               layout={layout}
               section={section}
               sectionIndex={sectionIndex}
+              sectionGenre={sectionGenres[sectionIndex]}
               activeSectionIndex={activeSectionIndex}
               focusProgress={focusProgress}
               overlayOpacity={overlayOpacity}
@@ -282,6 +300,21 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     flex: 1,
+  },
+  sectionLabelWrap: {
+    position: "absolute",
+    top: -SECTION_LABEL_OFFSET,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 25,
+  },
+  sectionLabel: {
+    color: "#111111",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
   topRightMenuWrap: {
     position: "absolute",

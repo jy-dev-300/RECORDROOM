@@ -63,6 +63,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
     res.status(200).json({
       genres: result.genres,
+      genreSections: result.genreSections,
       allAlbums: result.allAlbums,
     });
   } catch (error) {

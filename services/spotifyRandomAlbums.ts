@@ -6,6 +6,11 @@ const ALBUMS_PER_GENRE = 16;
 const SEARCH_PAGE_SIZE = 50;
 const MAX_SEARCH_OFFSET = 950;
 
+export type GenreAlbumSection = {
+  genre: string;
+  albums: Album[];
+};
+
 type SpotifyImage = {
   url: string;
   width: number | null;
@@ -146,9 +151,11 @@ export async function fetchRandomAlbumsByGenre(accessToken: string, market: stri
   const allGenres = await fetchAvailableGenreSeeds(accessToken);
   const selectedGenres = sampleSize(allGenres, RANDOM_GENRE_COUNT);
   const albumMap = new Map<string, Album>();
+  const genreSections: GenreAlbumSection[] = [];
 
   for (const genre of selectedGenres) {
     const genreAlbums = await fetchGenreAlbums(accessToken, genre, market, new Set(albumMap.keys()));
+    genreSections.push({ genre, albums: genreAlbums });
     genreAlbums.forEach((album) => {
       albumMap.set(album.id, album);
     });
@@ -159,6 +166,7 @@ export async function fetchRandomAlbumsByGenre(accessToken: string, market: stri
 
   return {
     genres: selectedGenres,
+    genreSections,
     allAlbums,
     allAlbumsById,
   };

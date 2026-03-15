@@ -1,8 +1,14 @@
+import type { Album } from "./albumsData";
 import type { StackProject } from "../screens/SingleAlbumStackScreen";
 
 export type AlbumStack = {
   id: string;
   projects: StackProject[];
+};
+
+export type GenreAlbumSection = {
+  genre: string;
+  albums: Album[];
 };
 
 function hslToHex(h: number, s: number, l: number) {
@@ -55,6 +61,44 @@ function getCardColor(stackIndex: number, cardIndex: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function getAlbumArt(album: Album) {
+  return album.images[0]?.url ?? "";
+}
+
+function getAlbumTitle(album: Album) {
+  const artistLabel = album.artists.map((artist) => artist.name).join(", ");
+  return artistLabel ? `${album.name} - ${artistLabel}` : album.name;
+}
+
+function getAlbumColor(albumId: string, layerIndex: number) {
+  const seed = Array.from(albumId).reduce((total, char) => total + char.charCodeAt(0), 0);
+  const hue = (seed * 19 + layerIndex * 37) % 360;
+  const saturation = clamp(68 + layerIndex * 4, 0, 100);
+  const lightness = clamp(54 - layerIndex * 4, 0, 100);
+  return hslToHex(hue, saturation, lightness);
+}
+
+export function createAlbumStackFromAlbum(album: Album, stackIndex: number): AlbumStack {
+  const media = getAlbumArt(album);
+
+  return {
+    id: `spotify-stack-${album.id}`,
+    projects: Array.from({ length: 5 }, (_, cardIndex) => ({
+      id: `${album.id}-card-${cardIndex + 1}`,
+      title: getAlbumTitle(album),
+      media,
+      type: "image" as const,
+      color: getAlbumColor(album.id, cardIndex),
+    })),
+  };
+}
+
+export function createAlbumStacksFromGenreSections(genreSections: GenreAlbumSection[]) {
+  return genreSections.flatMap((section, sectionIndex) =>
+    section.albums.map((album, albumIndex) => createAlbumStackFromAlbum(album, sectionIndex * 16 + albumIndex))
+  );
 }
 
 export const albumStacks: AlbumStack[] = Array.from({ length: 128 }, (_, stackIndex) => ({

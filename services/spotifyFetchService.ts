@@ -1,8 +1,10 @@
 import type { Album } from "../data/albumsData";
 import { config } from "./config";
+import type { GenreAlbumSection } from "./spotifyRandomAlbums";
 
 type RandomAlbumsResponse = {
   genres: string[];
+  genreSections: GenreAlbumSection[];
   allAlbums: Album[];
 };
 
@@ -29,6 +31,7 @@ export async function fetchRandomAlbumsByGenre() {
 
   return {
     genres: data.genres,
+    genreSections: data.genreSections,
     allAlbums: data.allAlbums,
     allAlbumsById,
   };

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -6,7 +6,7 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { albumStacks } from "../data/albumStacks";
+import { albumStacks, createAlbumStacksFromGenreSections, type GenreAlbumSection } from "../data/albumStacks";
 import {
   buildAlbumWorldLayout,
   chunkItems,
@@ -26,6 +26,7 @@ import AlbumsOverviewScreen from "../screens/AlbumsOverviewScreen";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleAlbumStackScreen, { type StackProject } from "../screens/SingleAlbumStackScreen";
+import { fetchRandomAlbumsByGenre } from "./spotifyFetchService";
 
 type OverviewMode = "all" | "my_albums";
 type SavedAlbumDictionary = {
@@ -47,25 +48,49 @@ export default function ScreenFlowControl() {
   const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
   const [focusedSectionIndex, setFocusedSectionIndex] = useState<number | null>(null);
   const [savedAlbumsSet, setSavedAlbumsSet] = useState<Record<string, SavedAlbumDictionary>>({});
+  const [spotifySections, setSpotifySections] = useState<GenreAlbumSection[]>([]);
 
   const focusedSectionRef = useRef<number | null>(null);
   const backGestureTriggered = useSharedValue(false);
 
   const layout = useMemo(() => buildAlbumWorldLayout(width, height), [height, width]);
+  const activeAlbumStacks = useMemo(
+    () => (spotifySections.length > 0 ? createAlbumStacksFromGenreSections(spotifySections) : albumStacks),
+    [spotifySections]
+  );
+  const sectionGenres = useMemo(() => spotifySections.map((section) => section.genre), [spotifySections]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchRandomAlbumsByGenre()
+      .then((result) => {
+        if (!cancelled) {
+          setSpotifySections(result.genreSections);
+        }
+      })
+      .catch((error) => {
+        console.warn("Spotify album fetch failed; using fallback album stacks.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const projectLookup = useMemo(() => {
     const map = new Map<string, { project: StackProject; stackIndex: number }>();
-    albumStacks.forEach((stack, stackIndex) => {
+    activeAlbumStacks.forEach((stack, stackIndex) => {
       stack.projects.forEach((project) => {
         map.set(project.id, { project, stackIndex });
       });
     });
     return map;
-  }, []);
+  }, [activeAlbumStacks]);
 
   const overviewStacks = useMemo(() => {
     if (overviewMode === "all") {
-      return albumStacks;
+      return activeAlbumStacks;
     }
 
     return Object.keys(savedAlbumsSet)
@@ -77,17 +102,17 @@ export default function ScreenFlowControl() {
           projects: [found.project],
         };
       })
-      .filter((value): value is (typeof albumStacks)[number] => value != null);
-  }, [overviewMode, projectLookup, savedAlbumsSet]);
+      .filter((value): value is (typeof activeAlbumStacks)[number] => value != null);
+  }, [activeAlbumStacks, overviewMode, projectLookup, savedAlbumsSet]);
 
   const overviewSourceStackIndexes = useMemo(() => {
     if (overviewMode === "all") {
-      return albumStacks.map((_, index) => index);
+      return activeAlbumStacks.map((_, index) => index);
     }
     return Object.keys(savedAlbumsSet)
       .map((albumId) => projectLookup.get(albumId)?.stackIndex ?? -1)
       .filter((index) => index >= 0);
-  }, [overviewMode, projectLookup, savedAlbumsSet]);
+  }, [activeAlbumStacks, overviewMode, projectLookup, savedAlbumsSet]);
 
   const sections = useMemo(() => chunkItems(overviewStacks, STACKS_PER_SECTION), [overviewStacks]);
   const overviewShift = layout.viewportHeight * 0.05;
@@ -201,7 +226,7 @@ export default function ScreenFlowControl() {
     });
 
   if (playingProject != null) {
-    const projects = albumStacks[playingProject.stackIndex]?.projects ?? [];
+    const projects = activeAlbumStacks[playingProject.stackIndex]?.projects ?? [];
     return (
       <View style={styles.pageRoot}>
         <PlayOptionsScreen
@@ -270,10 +295,10 @@ export default function ScreenFlowControl() {
         </View>
         <View style={styles.detailCanvas}>
           {giftingStackIndex != null ? (
-            <GiftCreationPage projects={albumStacks[giftingStackIndex]?.projects ?? []} />
+            <GiftCreationPage projects={activeAlbumStacks[giftingStackIndex]?.projects ?? []} />
           ) : (
             <SingleAlbumStackScreen
-              projects={albumStacks[selectedStackIndex].projects}
+              projects={activeAlbumStacks[selectedStackIndex].projects}
               enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
               onPlayPress={(_, index) => setPlayingProject({ stackIndex: selectedStackIndex, projectIndex: index })}
               onGiftPress={() => setGiftingStackIndex(selectedStackIndex)}
@@ -292,6 +317,7 @@ export default function ScreenFlowControl() {
       <AlbumsOverviewScreen
         layout={layout}
         sections={sections}
+        sectionGenres={overviewMode === "all" ? sectionGenres : []}
         focusedSectionIndex={focusedSectionIndex}
         isMyAlbumsView={overviewMode === "my_albums"}
         onPressSection={focusSection}
