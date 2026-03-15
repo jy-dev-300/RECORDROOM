@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "RECORDSHOP",
-    "slug": "RECORDSHOP",
+    "name": "RECORDROOM",
+    "slug": "recordroom",
+    "scheme": "recordroom",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

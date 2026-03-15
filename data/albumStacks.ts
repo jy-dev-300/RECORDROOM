@@ -1,4 +1,4 @@
-import type { StackProject } from "../components/ProjectCardStack";
+import type { StackProject } from "../screens/SingleAlbumStackScreen";
 
 export type AlbumStack = {
   id: string;
@@ -73,3 +73,4 @@ export const albumStacks: AlbumStack[] = Array.from({ length: 128 }, (_, stackIn
     };
   }),
 }));
+

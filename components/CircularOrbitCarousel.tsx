@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
+  Easing,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -100,6 +101,12 @@ type CircularWheelCarouselProps<T> = {
    * Strength of the horizontal bow / cylinder feel.
    */
   horizontalCurve?: number;
+
+  /**
+   * Optional one-time intro offset in items.
+   * Example: 2 starts at item 3 and animates back to item 1.
+   */
+  introFromOffset?: number;
 };
 
 function wrapIndex(index: number, size: number) {
@@ -135,11 +142,13 @@ export default function CircularWheelCarousel<T>({
   flipVertical = false,
   horizontalDirection = "right",
   horizontalCurve = 10,
+  introFromOffset = 0,
 }: CircularWheelCarouselProps<T>) {
   const count = data.length;
-  const position = useRef(new Animated.Value(initialIndex)).current;
-  const positionRef = useRef(initialIndex);
-  const dragStartRef = useRef(initialIndex);
+  const introStartIndex = initialIndex + introFromOffset;
+  const position = useRef(new Animated.Value(introStartIndex)).current;
+  const positionRef = useRef(introStartIndex);
+  const dragStartRef = useRef(introStartIndex);
   const [, forceRender] = useState(0);
 
   useEffect(() => {
@@ -161,6 +170,29 @@ export default function CircularWheelCarousel<T>({
       onIndexChange?.(activeIndex);
     }
   }, [activeIndex, count, onIndexChange]);
+
+  useEffect(() => {
+    position.stopAnimation();
+    position.setValue(introStartIndex);
+    positionRef.current = introStartIndex;
+    dragStartRef.current = introStartIndex;
+
+    if (count <= 1 || introFromOffset === 0) {
+      return;
+    }
+
+    const animation = Animated.timing(position, {
+      toValue: initialIndex,
+      duration: 420,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, [count, initialIndex, introFromOffset, introStartIndex, position]);
 
   const snapToRaw = (rawIndex: number) => {
     Animated.spring(position, {
@@ -321,7 +353,7 @@ const styles = StyleSheet.create({
   container: {
     width: "100%",
     position: "relative",
-    overflow: "hidden",
+    overflow: "visible",
     alignItems: "center",
     justifyContent: "center",
   },

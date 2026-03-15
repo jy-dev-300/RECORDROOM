@@ -23,12 +23,12 @@ function getPreviewJitter(stackId: string, layerIndex: number, size: number) {
   return { x, y, rotate };
 }
 
-type AlbumStackPreviewProps = {
+type AlbumStackPreviewOnOverviewScreenProps = {
   stack: AlbumStack;
   size: number;
 };
 
-export default function AlbumStackPreview({ stack, size }: AlbumStackPreviewProps) {
+export default function AlbumStackPreviewOnOverviewScreen({ stack, size }: AlbumStackPreviewOnOverviewScreenProps) {
   const layers = stack.projects.slice(0, 5);
   const stackHeight = getPreviewPressableHeight(size);
 
@@ -79,3 +79,4 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
   },
 });
+

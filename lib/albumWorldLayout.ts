@@ -6,8 +6,8 @@ export const MAX_SCALE_PHONE = 14;
 export const MAX_SCALE_TABLET = 12;
 export const PREVIEW_STRIP_RATIO = 24 / 360;
 export const PREVIEW_STRIP_FALLOFF = 0.76;
-export const EDGE_BACK_ZONE = 44;
-export const EDGE_BACK_TRIGGER = 48;
+export const EDGE_BACK_ZONE = 64;
+export const EDGE_BACK_TRIGGER = 40;
 export const OVERVIEW_VERTICAL_SHIFT_RATIO = 0.02;
 
 export type StackFrame = {

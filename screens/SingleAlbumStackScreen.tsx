@@ -20,21 +20,24 @@ export type StackProject = {
   href?: string;
 };
 
-type ProjectCardStackProps = {
+type SingleAlbumStackScreenProps = {
   projects: StackProject[];
+  enableIntroAnimation?: boolean;
   onActiveIndexChange?: (index: number) => void;
   focusIndex?: number | null;
   onProjectPress?: (project: StackProject, index: number) => void;
   onPlayPress?: (project: StackProject, index: number) => void;
+  onGiftPress?: (project: StackProject, index: number) => void;
+  isProjectSaved?: (project: StackProject) => boolean;
+  onSaveProject?: (project: StackProject, index: number) => void;
+  onRemoveProject?: (project: StackProject, index: number) => void;
   stackWidthOverride?: number;
 };
 
-// Lerp along the shortest circular path so the wrap from N-1 -> 0 is seamless
 function normalise(value: number, size: number) {
   return ((value % size) + size) % size;
 }
 
-// How many px of each background card are visible as a strip above the active card
 const STRIP = 24;
 const VISIBLE_DEPTH = 4;
 const EASE = 0.12;
@@ -43,7 +46,8 @@ const SNAP_EPSILON = 0.0009;
 const SWIPE_GESTURE_PX = 18;
 const SWIPE_COOLDOWN_MS = 120;
 const EARLY_WRAP_START = 0.95;
-const INTRO_DURATION_MS = 1000;
+const INTRO_DURATION_MS = 1200;
+const DETAIL_VERTICAL_SHIFT_RATIO = 0.05;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -78,30 +82,29 @@ function getMessyCardOffset(projectId: string, layerIndex: number, stackWidth: n
   return { x, y, rotate };
 }
 
-// Background cards should stay subdued, but the next card still needs to
-// "bleed in" smoothly as it approaches the front. This curve keeps far cards
-// dim, then ramps opacity up faster near the active position so the handoff
-// feels more intentional and less poppy.
-function getIncomingCardOpacity(rel: number) {
+function getIncomingCardOpacity() {
   return 1;
 }
 
-export default function ProjectCardStack({
+export default function SingleAlbumStackScreen({
   projects,
+  enableIntroAnimation = true,
   onActiveIndexChange,
   focusIndex,
   onProjectPress,
   onPlayPress,
+  onGiftPress,
+  isProjectSaved,
+  onSaveProject,
+  onRemoveProject,
   stackWidthOverride,
-}: ProjectCardStackProps) {
+}: SingleAlbumStackScreenProps) {
   const N = projects.length;
-  const [viewportWidth, setViewportWidth] = useState(
-    Dimensions.get("window").width
-  );
+  const [viewportWidth, setViewportWidth] = useState(Dimensions.get("window").width);
+  const [viewportHeight, setViewportHeight] = useState(Dimensions.get("window").height);
   const [stackReady, setStackReady] = useState(false);
   const [frameValue, setFrameValue] = useState(0);
   const [loadedMap, setLoadedMap] = useState<Record<string, boolean>>({});
-  const [overlayProjectId, setOverlayProjectId] = useState<string | null>(null);
   const [introLocked, setIntroLocked] = useState(true);
 
   const progressRef = useRef(0);
@@ -121,6 +124,7 @@ export default function ProjectCardStack({
   useEffect(() => {
     const sub = Dimensions.addEventListener("change", ({ window }) => {
       setViewportWidth(window.width);
+      setViewportHeight(window.height);
     });
     return () => sub.remove();
   }, []);
@@ -134,7 +138,6 @@ export default function ProjectCardStack({
       targetRef.current = 0;
       setFrameValue(0);
       setLoadedMap({});
-      setOverlayProjectId(null);
 
       await Promise.all(
         projects.map(async (project) => {
@@ -177,9 +180,7 @@ export default function ProjectCardStack({
     const k = Math.round((current - base) / N);
     const candidates = [base + (k - 1) * N, base + k * N, base + (k + 1) * N];
     return candidates.reduce((best, candidate) =>
-      Math.abs(candidate - current) < Math.abs(best - current)
-        ? candidate
-        : best
+      Math.abs(candidate - current) < Math.abs(best - current) ? candidate : best
     );
   };
 
@@ -189,13 +190,20 @@ export default function ProjectCardStack({
   }, [focusIndex, N]);
 
   useEffect(() => {
+    if (!enableIntroAnimation) {
+      introProgress.setValue(1);
+      introLockedRef.current = false;
+      setIntroLocked(false);
+      return;
+    }
+
     introProgress.setValue(0);
     introLockedRef.current = true;
     setIntroLocked(true);
     const animation = Animated.timing(introProgress, {
       toValue: 1,
       duration: INTRO_DURATION_MS,
-      easing: Easing.out(Easing.cubic),
+      easing: Easing.bezier(0.2, 0.9, 0.25, 1),
       useNativeDriver: true,
     });
     animation.start(({ finished }) => {
@@ -207,16 +215,14 @@ export default function ProjectCardStack({
     return () => {
       animation.stop();
     };
-  }, [introProgress, projects]);
+  }, [enableIntroAnimation, introProgress, projects]);
 
   useEffect(() => {
     const animate = () => {
-      const activeEase =
-        inputModeRef.current === "touch" ? TOUCH_EASE : EASE;
+      const activeEase = inputModeRef.current === "touch" ? TOUCH_EASE : EASE;
 
       progressRef.current =
-        progressRef.current +
-        (targetRef.current - progressRef.current) * activeEase;
+        progressRef.current + (targetRef.current - progressRef.current) * activeEase;
 
       const diff = targetRef.current - progressRef.current;
       if (diff > 0.001) motionDirRef.current = 1;
@@ -276,8 +282,7 @@ export default function ProjectCardStack({
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gestureState) =>
-          !introLockedRef.current &&
-          Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+          !introLockedRef.current && Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
         onPanResponderGrant: (_, gestureState) => {
           if (introLockedRef.current) return;
           inputModeRef.current = "touch";
@@ -311,35 +316,26 @@ export default function ProjectCardStack({
     []
   );
 
-  // Freeze width between 756px and 1245px viewport so the stack does not
-  // shrink in that band (mirrors the web version's behaviour).
   const stackWidth =
     stackWidthOverride ??
-    (viewportWidth >= 756 && viewportWidth <= 1245
-      ? 360
-      : clamp(viewportWidth * 0.88, 280, 420));
+    (viewportWidth >= 756 && viewportWidth <= 1245 ? 360 : clamp(viewportWidth * 0.88, 280, 420));
   const messyOffsets = useMemo(
     () => projects.map((project, index) => getMessyCardOffset(project.id, index, stackWidth)),
     [projects, stackWidth]
   );
 
-  // Square cards: keep current width, match height to width.
   const cardHeight = stackWidth;
+  const verticalShift = viewportHeight * DETAIL_VERTICAL_SHIFT_RATIO;
 
   const rawP = frameValue;
   const stepProgress = rawP - Math.floor(rawP);
   const currentSlotBase = Math.floor(rawP);
   const activeSlot = normalise(currentSlotBase, N);
-  const activeProjectId = projects[activeSlot]?.id ?? null;
-
-  useEffect(() => {
-    setOverlayProjectId((current) =>
-      current != null && current === activeProjectId ? current : null
-    );
-  }, [activeProjectId]);
+  const activeProject = projects[activeSlot];
+  const isActiveProjectSaved = activeProject ? isProjectSaved?.(activeProject) === true : false;
 
   return (
-    <View style={styles.outer}>
+    <View style={[styles.outer, { transform: [{ translateY: verticalShift }] }]}>
       <View
         {...panResponder.panHandlers}
         style={[
@@ -370,17 +366,12 @@ export default function ProjectCardStack({
             opacity = 1;
             clipFromTop = 0;
           } else if (rel >= 0) {
-            // Background/incoming card: sits above the active card as a strip.
-            // Scale from top-center (compensate for RN center-origin scaling).
             scale = 1;
             const tyStrip = -(rel * STRIP);
-            // Shift up by half the height "lost" to center-based scaling so the
-            // top edge stays anchored, matching CSS transformOrigin: "top center".
             ty = tyStrip - (cardHeight / 2) * (1 - scale);
-            opacity = getIncomingCardOpacity(rel);
+            opacity = getIncomingCardOpacity();
             clipFromTop = 0;
           } else {
-            // Outgoing card: roll away by clipping from the bottom upward.
             const roll = clamp(absRel, 0, 1);
             if (roll < EARLY_WRAP_START) {
               const rollSmooth = 1 - Math.pow(1 - roll, 1.6);
@@ -389,13 +380,7 @@ export default function ProjectCardStack({
               opacity = 1;
               clipFromTop = rollSmooth * cardHeight;
             } else {
-              // In the last 5% of roll, blend into the back-slot pose so
-              // re-entry feels continuous instead of a hard pop.
-              const t = clamp(
-                (roll - EARLY_WRAP_START) / (1 - EARLY_WRAP_START),
-                0,
-                1
-              );
+              const t = clamp((roll - EARLY_WRAP_START) / (1 - EARLY_WRAP_START), 0, 1);
               const tFast = 1 - Math.pow(1 - t, 3);
               const wrappedRel = N + rel;
               const backRel = Math.min(wrappedRel, VISIBLE_DEPTH + 1);
@@ -412,7 +397,6 @@ export default function ProjectCardStack({
             }
           }
 
-          // Keep the outgoing rolling card above the incoming card during handoff.
           const zIndex =
             rel < 0
               ? earlyWrapped
@@ -427,28 +411,18 @@ export default function ProjectCardStack({
                 resizeMode="cover"
                 onLoad={() =>
                   setLoadedMap((current) =>
-                    current[project.id]
-                      ? current
-                      : { ...current, [project.id]: true }
+                    current[project.id] ? current : { ...current, [project.id]: true }
                   )
                 }
                 style={styles.mediaFill}
               >
-                {!loadedMap[project.id] ? (
-                  <View style={styles.loadingFill} />
-                ) : null}
+                {!loadedMap[project.id] ? <View style={styles.loadingFill} /> : null}
               </ImageBackground>
             ) : (
-              <View
-                style={[
-                  styles.colorSurface,
-                  { backgroundColor: project.color },
-                ]}
-              />
+              <View style={[styles.colorSurface, { backgroundColor: project.color }]} />
             );
 
           const messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
-          const showOverlay = overlayProjectId === project.id;
           const canInteract = !introLocked && absRel < 0.35;
 
           return (
@@ -491,62 +465,67 @@ export default function ProjectCardStack({
                   },
                 ]}
               >
-              {/*
-               * Clip structure: simulates CSS clip-path inset(top 0 0 0).
-               * clipBoundary — hard outer clip at the card's own bounds.
-               * clipWindow   — its top edge moves down by clipFromTop, so only
-               *                the bottom portion of the card remains visible.
-               * clipContent  — counteracts the window offset so the image stays
-               *                at y = 0 relative to the card frame.
-               */}
-              <View style={[StyleSheet.absoluteFillObject, styles.clipBoundary]}>
-                <View style={[styles.clipWindow, { top: clipFromTop }]}>
-                  <View
-                    style={[
-                      styles.clipContent,
-                      { top: -clipFromTop, height: cardHeight },
-                    ]}
-                  >
-                    <Pressable
-                      disabled={!canInteract}
-                      onPress={() => {
-                        setOverlayProjectId((current) =>
-                          current === project.id ? null : project.id
-                        );
-                        onProjectPress?.(project, index);
-                      }}
-                      style={StyleSheet.absoluteFillObject}
-                    >
-                      {content}
-                      {showOverlay ? (
-                        <View style={styles.overlay}>
-                          <View style={styles.overlayBlur} />
-                          <View style={styles.overlayActions}>
-                            <Pressable
-                              style={styles.actionButton}
-                              onPress={() => onPlayPress?.(project, index)}
-                            >
-                              <View style={styles.actionButtonInner}>
-                                <View style={styles.playTriangle} />
-                              </View>
-                            </Pressable>
-                            <Pressable style={styles.actionButton}>
-                              <View style={styles.actionButtonInner}>
-                                <View style={styles.plusHorizontal} />
-                                <View style={styles.plusVertical} />
-                              </View>
-                            </Pressable>
-                          </View>
-                        </View>
-                      ) : null}
-                    </Pressable>
+                <View style={[StyleSheet.absoluteFillObject, styles.clipBoundary]}>
+                  <View style={[styles.clipWindow, { top: clipFromTop }]}>
+                    <View style={[styles.clipContent, { top: -clipFromTop, height: cardHeight }]}>
+                      <View style={StyleSheet.absoluteFillObject}>{content}</View>
+                    </View>
                   </View>
                 </View>
-              </View>
               </Animated.View>
             </View>
           );
         })}
+      </View>
+      <View style={styles.controlsRow}>
+        <Pressable
+          style={styles.actionButton}
+          disabled={introLocked || !activeProject}
+          onPress={() => {
+            if (!activeProject) return;
+            onPlayPress?.(activeProject, activeSlot);
+          }}
+        >
+          <View style={styles.actionButtonInner}>
+            <View style={styles.playTriangle} />
+          </View>
+        </Pressable>
+        <Pressable
+          style={styles.actionButton}
+          disabled={introLocked || !activeProject}
+          onPress={() => {
+            if (!activeProject) return;
+            if (isActiveProjectSaved) {
+              onRemoveProject?.(activeProject, activeSlot);
+            } else {
+              onSaveProject?.(activeProject, activeSlot);
+            }
+            onProjectPress?.(activeProject, activeSlot);
+          }}
+        >
+          <View style={styles.actionButtonInner}>
+            <View style={styles.plusHorizontal} />
+            {!isActiveProjectSaved ? <View style={styles.plusVertical} /> : null}
+          </View>
+        </Pressable>
+        <Pressable
+          style={styles.actionButton}
+          disabled={introLocked || !activeProject}
+          onPress={() => {
+            if (!activeProject) return;
+            onGiftPress?.(activeProject, activeSlot);
+          }}
+        >
+          <View style={styles.actionButtonInner}>
+            <View style={styles.giftLid} />
+            <View style={styles.giftRibbonVertical} />
+            <View style={styles.giftRibbonHorizontal} />
+            <View style={styles.giftBox} />
+            <View style={[styles.giftBowLoop, styles.giftBowLeft]} />
+            <View style={[styles.giftBowLoop, styles.giftBowRight]} />
+            <View style={styles.giftBowCenter} />
+          </View>
+        </Pressable>
       </View>
     </View>
   );
@@ -561,6 +540,15 @@ const styles = StyleSheet.create({
   },
   stack: {
     position: "relative",
+  },
+  controlsRow: {
+    marginTop: 18,
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 50,
+    elevation: 6,
   },
   clipBoundary: {
     overflow: "hidden",
@@ -589,28 +577,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000000",
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  overlayBlur: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(20, 20, 20, 0.25)",
-    borderColor: "rgba(255, 255, 255, 0.28)",
-    borderWidth: 1,
-  },
-  overlayActions: {
-    flexDirection: "row",
-    gap: 12,
-  },
   actionButton: {
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.45)",
+    borderColor: "#000000",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -628,7 +601,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 14,
     borderTopColor: "transparent",
     borderBottomColor: "transparent",
-    borderLeftColor: "#FFFFFF",
+    borderLeftColor: "#000000",
     marginLeft: 3,
   },
   plusHorizontal: {
@@ -636,13 +609,76 @@ const styles = StyleSheet.create({
     width: 16,
     height: 3,
     borderRadius: 2,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#000000",
   },
   plusVertical: {
     position: "absolute",
     width: 3,
     height: 16,
     borderRadius: 2,
+    backgroundColor: "#000000",
+  },
+  giftLid: {
+    position: "absolute",
+    top: 8,
+    width: 20,
+    height: 5,
+    borderWidth: 2,
+    borderColor: "#000000",
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
     backgroundColor: "#FFFFFF",
   },
+  giftBox: {
+    position: "absolute",
+    bottom: 2,
+    width: 18,
+    height: 11,
+    borderWidth: 2,
+    borderColor: "#000000",
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+  },
+  giftRibbonVertical: {
+    position: "absolute",
+    top: 8,
+    width: 2,
+    height: 16,
+    backgroundColor: "#000000",
+  },
+  giftRibbonHorizontal: {
+    position: "absolute",
+    top: 12,
+    width: 20,
+    height: 2,
+    backgroundColor: "#000000",
+  },
+  giftBowLoop: {
+    position: "absolute",
+    top: 3,
+    width: 7,
+    height: 5,
+    borderWidth: 2,
+    borderColor: "#000000",
+    borderBottomWidth: 0,
+    borderRadius: 6,
+  },
+  giftBowLeft: {
+    left: 5,
+    transform: [{ rotate: "-24deg" }],
+  },
+  giftBowRight: {
+    right: 5,
+    transform: [{ rotate: "24deg" }],
+  },
+  giftBowCenter: {
+    position: "absolute",
+    top: 6,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#000000",
+  },
 });
+
