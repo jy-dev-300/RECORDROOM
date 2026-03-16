@@ -1,24 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  runOnJS,
-  useSharedValue,
-} from "react-native-reanimated";
+import { runOnJS, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { createTrackStackSections, createTrackStacksFromTracks, trackStacks } from "../data/trackStacks";
 import {
-  albumStacks,
-  createAlbumStackSectionsFromCountrySections,
-  createAlbumStacksFromCountrySections,
-  type CountryAlbumSection,
-} from "../data/albumStacks";
-import {
-  buildAlbumWorldLayout,
+  buildTrackWorldLayout,
   chunkItems,
   EDGE_BACK_TRIGGER,
   EDGE_BACK_ZONE,
   STACKS_PER_SECTION,
-} from "../lib/albumWorldLayout";
+} from "../lib/trackWorldLayout";
 import {
   NAV_BUTTON_SIZE,
   NAV_ICON_SIZE,
@@ -27,20 +19,17 @@ import {
   NAV_TOP_PADDING,
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
-import AlbumsOverviewScreen from "../screens/AlbumsOverviewScreen";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
-import SingleAlbumStackScreen, { type StackProject } from "../screens/SingleAlbumStackScreen";
-import {
-  cacheRandomAlbumsByCountry,
-  fetchRandomAlbumsByCountry,
-  loadCachedRandomAlbumsByCountry,
-} from "./musicBrainzFetchService";
+import SingleTrackStackScreen, { type StackProject } from "../screens/SingleTrackStackScreen";
+import TracksOverviewScreen from "../screens/TracksOverviewScreen";
+import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./soundCloudFetchService";
+import type { FeedTrack } from "./soundCloudRandomTracks";
 
-type OverviewMode = "all" | "my_albums";
-type SavedAlbumDictionary = {
-  album_id: string;
-  album_cover_art: string;
+type OverviewMode = "all" | "my_tracks";
+type SavedTrackDictionary = {
+  track_id: string;
+  track_artwork: string;
 };
 
 const PARTITION_EDGE_BACK_ZONE = 14;
@@ -56,57 +45,50 @@ export default function ScreenFlowControl() {
   const [giftingStackIndex, setGiftingStackIndex] = useState<number | null>(null);
   const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
   const [focusedSectionIndex, setFocusedSectionIndex] = useState<number | null>(null);
-  const [savedAlbumsSet, setSavedAlbumsSet] = useState<Record<string, SavedAlbumDictionary>>({});
-  const [musicBrainzSections, setMusicBrainzSections] = useState<CountryAlbumSection[]>([]);
+  const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackDictionary>>({});
+  const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
 
   const focusedSectionRef = useRef<number | null>(null);
   const backGestureTriggered = useSharedValue(false);
 
-  const layout = useMemo(() => buildAlbumWorldLayout(width, height), [height, width]);
-  const activeAlbumStacks = useMemo(
-    () =>
-      musicBrainzSections.length > 0
-        ? createAlbumStacksFromCountrySections(musicBrainzSections)
-        : albumStacks,
-    [musicBrainzSections]
+  const layout = useMemo(() => buildTrackWorldLayout(width, height), [height, width]);
+  const activeTrackStacks = useMemo(
+    () => (feedTracks.length > 0 ? createTrackStacksFromTracks(feedTracks) : trackStacks),
+    [feedTracks]
   );
-  const sectionCountries = useMemo(
-    () => musicBrainzSections.map((section) => section.country),
-    [musicBrainzSections]
-  );
-  const allAlbumSections = useMemo(
+  const allTrackSections = useMemo(
     () =>
-      musicBrainzSections.length > 0
-        ? createAlbumStackSectionsFromCountrySections(musicBrainzSections)
-        : chunkItems(activeAlbumStacks, STACKS_PER_SECTION),
-    [activeAlbumStacks, musicBrainzSections]
+      feedTracks.length > 0
+        ? createTrackStackSections(feedTracks)
+        : chunkItems(activeTrackStacks, STACKS_PER_SECTION),
+    [activeTrackStacks, feedTracks]
   );
 
   useEffect(() => {
     let cancelled = false;
 
-    loadCachedRandomAlbumsByCountry()
+    loadCachedRandomTracks()
       .then((cached) => {
         if (!cancelled && cached) {
-          setMusicBrainzSections(cached.countrySections);
+          setFeedTracks(cached.tracks);
         }
       })
       .catch(() => {
         // Ignore cache read failures and continue to network.
       })
       .finally(() => {
-        fetchRandomAlbumsByCountry()
+        fetchRandomTracks()
           .then((result) => {
             if (!cancelled) {
-              setMusicBrainzSections(result.countrySections);
+              setFeedTracks(result.tracks);
             }
-            void cacheRandomAlbumsByCountry(result);
+            void cacheRandomTracks(result);
           })
           .catch((error) => {
-            console.warn("MusicBrainz album fetch failed; using fallback album stacks.", error);
+            console.warn("SoundCloud track fetch failed; using fallback track stacks.", error);
           });
-      })
+      });
 
     return () => {
       cancelled = true;
@@ -115,56 +97,59 @@ export default function ScreenFlowControl() {
 
   const projectLookup = useMemo(() => {
     const map = new Map<string, { project: StackProject; stackIndex: number }>();
-    activeAlbumStacks.forEach((stack, stackIndex) => {
+    activeTrackStacks.forEach((stack, stackIndex) => {
       stack.projects.forEach((project) => {
         map.set(project.id, { project, stackIndex });
       });
     });
     return map;
-  }, [activeAlbumStacks]);
+  }, [activeTrackStacks]);
 
   const overviewStacks = useMemo(() => {
     if (overviewMode === "all") {
-      return activeAlbumStacks;
+      return activeTrackStacks;
     }
 
-    return Object.keys(savedAlbumsSet)
-      .map((albumId) => {
-        const found = projectLookup.get(albumId);
+    return Object.keys(savedTracksSet)
+      .map((trackId) => {
+        const found = projectLookup.get(trackId);
         if (!found) return null;
         return {
-          id: `saved-${albumId}`,
+          id: `saved-${trackId}`,
           projects: [found.project],
         };
       })
-      .filter((value): value is (typeof activeAlbumStacks)[number] => value != null);
-  }, [activeAlbumStacks, overviewMode, projectLookup, savedAlbumsSet]);
+      .filter((value): value is (typeof activeTrackStacks)[number] => value != null);
+  }, [activeTrackStacks, overviewMode, projectLookup, savedTracksSet]);
 
   const overviewSourceStackIndexes = useMemo(() => {
     if (overviewMode === "all") {
-      return activeAlbumStacks.map((_, index) => index);
+      return activeTrackStacks.map((_, index) => index);
     }
-    return Object.keys(savedAlbumsSet)
-      .map((albumId) => projectLookup.get(albumId)?.stackIndex ?? -1)
+
+    return Object.keys(savedTracksSet)
+      .map((trackId) => projectLookup.get(trackId)?.stackIndex ?? -1)
       .filter((index) => index >= 0);
-  }, [activeAlbumStacks, overviewMode, projectLookup, savedAlbumsSet]);
+  }, [activeTrackStacks, overviewMode, projectLookup, savedTracksSet]);
 
   const sections = useMemo(() => {
     if (overviewMode === "all") {
-      return allAlbumSections;
+      return allTrackSections;
     }
 
     return chunkItems(overviewStacks, STACKS_PER_SECTION);
-  }, [allAlbumSections, overviewMode, overviewStacks]);
+  }, [allTrackSections, overviewMode, overviewStacks]);
+
   const overviewSourceSections = useMemo(() => {
     if (overviewMode === "all") {
-      return allAlbumSections.map((section) =>
-        section.map((stack) => activeAlbumStacks.findIndex((candidate) => candidate.id === stack.id))
+      return allTrackSections.map((section) =>
+        section.map((stack) => activeTrackStacks.findIndex((candidate) => candidate.id === stack.id))
       );
     }
 
     return chunkItems(overviewSourceStackIndexes, STACKS_PER_SECTION);
-  }, [activeAlbumStacks, allAlbumSections, overviewMode, overviewSourceStackIndexes]);
+  }, [activeTrackStacks, allTrackSections, overviewMode, overviewSourceStackIndexes]);
+
   const overviewShift = layout.viewportHeight * 0.05;
   const navTop = insets.top + NAV_TOP_PADDING - overviewShift;
 
@@ -179,20 +164,20 @@ export default function ScreenFlowControl() {
   };
 
   const handleSaveProject = (project: StackProject) => {
-    setSavedAlbumsSet((current) => {
+    setSavedTracksSet((current) => {
       if (current[project.id]) return current;
       return {
         ...current,
         [project.id]: {
-          album_id: project.id,
-          album_cover_art: project.media || project.color,
+          track_id: project.id,
+          track_artwork: project.media || project.color,
         },
       };
     });
   };
 
   const handleRemoveProject = (project: StackProject) => {
-    setSavedAlbumsSet((current) => {
+    setSavedTracksSet((current) => {
       if (!current[project.id]) return current;
       const next = { ...current };
       delete next[project.id];
@@ -239,7 +224,7 @@ export default function ScreenFlowControl() {
       return;
     }
 
-    if (overviewMode === "my_albums") {
+    if (overviewMode === "my_tracks") {
       setMenuOpen(false);
       setOverviewMode("all");
     }
@@ -250,7 +235,7 @@ export default function ScreenFlowControl() {
     giftingStackIndex != null ||
     selectedStackIndex != null ||
     focusedSectionIndex != null ||
-    overviewMode === "my_albums";
+    overviewMode === "my_tracks";
   const overviewBackEdgeWidth =
     selectedStackIndex == null && focusedSectionIndex != null ? PARTITION_EDGE_BACK_ZONE : EDGE_BACK_ZONE;
 
@@ -276,7 +261,7 @@ export default function ScreenFlowControl() {
     });
 
   if (playingProject != null) {
-    const projects = activeAlbumStacks[playingProject.stackIndex]?.projects ?? [];
+    const projects = activeTrackStacks[playingProject.stackIndex]?.projects ?? [];
     return (
       <View style={styles.pageRoot}>
         <PlayOptionsScreen
@@ -314,7 +299,7 @@ export default function ScreenFlowControl() {
             </Pressable>
             {menuOpen ? (
               <View style={styles.menuSheet}>
-                {overviewMode === "my_albums" ? (
+                {overviewMode === "my_tracks" ? (
                   <Pressable
                     onPress={() => {
                       setMenuOpen(false);
@@ -324,7 +309,7 @@ export default function ScreenFlowControl() {
                     }}
                     style={styles.menuItem}
                   >
-                    <Text style={styles.menuItemText}>All Albums</Text>
+                    <Text style={styles.menuItemText}>All Tracks</Text>
                   </Pressable>
                 ) : (
                   <Pressable
@@ -332,11 +317,11 @@ export default function ScreenFlowControl() {
                       setMenuOpen(false);
                       setSelectedStackIndex(null);
                       resetSectionFocus();
-                      setOverviewMode("my_albums");
+                      setOverviewMode("my_tracks");
                     }}
                     style={styles.menuItem}
                   >
-                    <Text style={styles.menuItemText}>My Albums</Text>
+                    <Text style={styles.menuItemText}>My Tracks</Text>
                   </Pressable>
                 )}
               </View>
@@ -345,14 +330,14 @@ export default function ScreenFlowControl() {
         </View>
         <View style={styles.detailCanvas}>
           {giftingStackIndex != null ? (
-            <GiftCreationPage projects={activeAlbumStacks[giftingStackIndex]?.projects ?? []} />
+            <GiftCreationPage projects={activeTrackStacks[giftingStackIndex]?.projects ?? []} />
           ) : (
-            <SingleAlbumStackScreen
-              projects={activeAlbumStacks[selectedStackIndex].projects}
+            <SingleTrackStackScreen
+              projects={activeTrackStacks[selectedStackIndex].projects}
               enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
               onPlayPress={(_, index) => setPlayingProject({ stackIndex: selectedStackIndex, projectIndex: index })}
               onGiftPress={() => setGiftingStackIndex(selectedStackIndex)}
-              isProjectSaved={(project) => savedAlbumsSet[project.id] != null}
+              isProjectSaved={(project) => savedTracksSet[project.id] != null}
               onSaveProject={(project) => handleSaveProject(project)}
               onRemoveProject={(project) => handleRemoveProject(project)}
             />
@@ -364,13 +349,12 @@ export default function ScreenFlowControl() {
 
   return (
     <View style={styles.pageRoot}>
-      <AlbumsOverviewScreen
+      <TracksOverviewScreen
         layout={layout}
         sections={sections}
-        sectionCountries={overviewMode === "all" ? sectionCountries : []}
         focusedSectionIndex={focusedSectionIndex}
         previewRevealPrimed={overviewPreviewPrimed}
-        isMyAlbumsView={overviewMode === "my_albums"}
+        isMyTracksView={overviewMode === "my_tracks"}
         onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
         onPressSection={focusSection}
         onPressStack={(sectionIndex, stackIndex) => {
@@ -381,12 +365,12 @@ export default function ScreenFlowControl() {
           setReturningFromPlayOptions(false);
           setSelectedStackIndex(sourceStackIndex);
         }}
-        onPressMyAlbums={() => {
+        onPressMyTracks={() => {
           setMenuOpen(false);
           resetSectionFocus();
-          setOverviewMode("my_albums");
+          setOverviewMode("my_tracks");
         }}
-        onPressAllAlbums={() => {
+        onPressAllTracks={() => {
           setMenuOpen(false);
           resetSectionFocus();
           setOverviewMode("all");

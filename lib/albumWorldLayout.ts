@@ -1,6 +1,6 @@
 export const SECTIONS_PER_ROW = 2;
-export const STACKS_PER_SECTION = 16;
-export const STACKS_PER_ROW = 8;
+export const STACKS_PER_SECTION = 4;
+export const STACKS_PER_ROW = 2;
 export const MIN_SCALE = 1;
 export const MAX_SCALE_PHONE = 14;
 export const MAX_SCALE_TABLET = 12;
@@ -115,7 +115,7 @@ export function getPreviewStackOffset(size: number, rel: number) {
 }
 
 export function getPreviewPressableHeight(size: number) {
-  return size + getPreviewStackOffset(size, 4);
+  return size + getPreviewStackOffset(size, 3);
 }
 
 export function buildAlbumWorldLayout(width: number, height: number): AlbumWorldLayout {

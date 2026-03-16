@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/musicbrainz/refresh-daily",
+      "path": "/api/soundcloud/refresh-daily",
       "schedule": "0 6 * * *"
     }
   ]

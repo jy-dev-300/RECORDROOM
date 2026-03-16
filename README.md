@@ -2,68 +2,60 @@
 
 ## Vercel Setup
 
-This project uses Vercel as a lightweight backend for album data fetching, daily refresh, and caching.
+This project now uses Vercel as a lightweight backend for SoundCloud track discovery and daily refreshes.
 
 ### Purpose
 
-- The Expo app does **not** call MusicBrainz directly for the 128-album overview.
-- It calls a Vercel serverless route instead.
-- A daily refresh route generates the shared 128-album payload.
-- User-facing requests read the stored payload instead of regenerating it.
+- The Expo app does not call SoundCloud discovery endpoints directly.
+- It calls a Vercel serverless route that returns a curated discovery feed.
+- The backend fetches a large candidate pool of public SoundCloud tracks.
+- It filters obvious junk, scores survivors, preserves randomness, and returns up to 128 tracks.
+- The overview UI renders 32 stacks with 4 tracks each in the same partitioned layout.
 
 ## Environment
 
 ### Expo local env
 
-Set in [.env.local](/c:/Users/jsy30/Desktop/RECORDROOM/.env.local):
+Set in [`.env.local`](/c:/Users/jsy30/Desktop/RECORDROOM/.env.local):
 
 ```env
 EXPO_PUBLIC_API_BASE_URL=https://your-vercel-project-url.vercel.app
-EXPO_PUBLIC_SPOTIFY_CLIENT_ID=your_spotify_client_id_here
+EXPO_PUBLIC_SOUNDCLOUD_CLIENT_ID=your_soundcloud_client_id
 ```
 
 Notes:
 - `EXPO_PUBLIC_API_BASE_URL` is required for the app to reach the Vercel backend.
-- `EXPO_PUBLIC_SPOTIFY_CLIENT_ID` is kept for future Spotify playback/auth work.
+- `EXPO_PUBLIC_SOUNDCLOUD_CLIENT_ID` can be used locally, but the backend should also have a server-side SoundCloud client ID configured.
 
 ### Vercel env
 
-Current MusicBrainz album fetching does not require private MusicBrainz secrets.
+Configure these in Vercel:
 
-For persistent daily storage, configure Redis REST env vars in Vercel:
+- `SOUNDCLOUD_CLIENT_ID`
+- `CRON_SECRET` for protected cron execution, if desired
 
-- `KV_REST_API_URL` and `KV_REST_API_TOKEN`
-  or
-- `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+The active backend no longer depends on Spotify, MusicBrainz, or Redis for the discovery feed.
 
-Optional for secured cron execution:
-
-- `CRON_SECRET`
-
-If Spotify playback/auth is used later, related env vars can live in Vercel or app config depending on the auth flow.
-
-## Vercel Route
+## Vercel Routes
 
 User-facing serverless route:
 
-- [api/musicbrainz/random-albums.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-albums.ts)
+- [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts)
 
 Route URL:
 
 ```txt
-/api/musicbrainz/random-albums
+/api/soundcloud/random-tracks
 ```
 
 What it returns:
 
-- `countries`
-- `countrySections`
-- `allAlbums`
+- `tracks`
 - `generatedAt`
 
 Daily refresh route:
 
-- [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
+- [api/soundcloud/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/refresh-daily.ts)
 
 Cron config:
 
@@ -73,55 +65,53 @@ Cron config:
 
 ### App-facing fetch service
 
-- [services/musicBrainzFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzFetchService.ts)
+- [services/soundCloudFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudFetchService.ts)
 
-Used by the Expo app to call the Vercel route.
+Used by the Expo app to call the Vercel route and cache track artwork on-device.
 
-### Server-side MusicBrainz fetch logic
+### Server-side SoundCloud discovery logic
 
-- [services/musicBrainzRandomAlbums.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzRandomAlbums.ts)
-
-Used only by the Vercel route.
+- [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts)
 
 Responsibilities:
-- choose 8 random countries
-- fetch up to 16 albums per country from the current year
-- shape MusicBrainz results into the app `Album` format
-- provide cover-art URLs via Cover Art Archive
 
-## Caching
+- fetch 400 to 800 public SoundCloud candidates per batch
+- reject non-streamable, artless, too-short, too-long, and obviously low-signal tracks
+- reject common spam patterns from title and tags
+- score tracks using likes, plays, comments, reposts, followers, metadata richness, and duration
+- keep only tracks with score `>= 8`
+- shuffle survivors before applying a max of 2 tracks per creator
+- return up to 128 `FeedTrack` items
 
-Caching/storage is now split like this:
+## Device Caching
 
-- persistent daily payload in Redis via [services/dailyAlbumsStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyAlbumsStore.ts)
-- daily generation through [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
-- read-only user-facing fetch through [api/musicbrainz/random-albums.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-albums.ts)
-- global refresh lock in Redis so only one refresh runs at a time
-- CDN cache headers on the user-facing response
+Track payloads and artwork are cached on-device through:
 
-Response header for debugging:
+- [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts)
 
-- `X-Recordroom-Cache`
-  Values: `HIT`, `MISS`
+This cache:
+
+- stores the last fetched feed payload locally
+- prefetches artwork for the first part of the feed
+- rewrites cached artwork paths when available
 
 ## Data Flow
 
-1. Expo app starts
-2. Vercel cron calls [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts) once per day
-3. That route generates the new shared 128-album payload and stores it in Redis
-4. [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx) calls the app-facing MusicBrainz fetch service
-5. The user-facing route returns stored payload from Redis
-6. [data/albumStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/albumStacks.ts) converts albums into the stack UI model
-7. [screens/AlbumsOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/AlbumsOverviewScreen.tsx) renders the 128 overview with country labels above each partition
+1. Expo app starts.
+2. [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx) loads cached tracks if available.
+3. The app requests [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts).
+4. [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts) builds the filtered random feed.
+5. [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts) converts the 128-track feed into 32 stacks of 4 tracks.
+6. [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx) renders the partitioned overview.
 
-## Important Routes and Files
+## Important Files
 
-- [api/musicbrainz/random-albums.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-albums.ts)
-- [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
-- [services/dailyAlbumsStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyAlbumsStore.ts)
-- [services/musicBrainzFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzFetchService.ts)
-- [services/musicBrainzRandomAlbums.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzRandomAlbums.ts)
+- [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts)
+- [api/soundcloud/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/refresh-daily.ts)
+- [services/soundCloudFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudFetchService.ts)
+- [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts)
+- [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts)
 - [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
-- [data/musicBrainzCountries.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/musicBrainzCountries.ts)
-- [data/albumsData.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/albumsData.ts)
-- [data/albumStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/albumStacks.ts)
+- [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
+- [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
+- [screens/Partition16Screen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/Partition16Screen.tsx)

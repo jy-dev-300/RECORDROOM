@@ -5,13 +5,13 @@ import Animated, {
   type SharedValue,
   useAnimatedStyle,
 } from "react-native-reanimated";
-import type { AlbumStack } from "../data/albumStacks";
+import type { TrackStack } from "../data/trackStacks";
 import {
   getPreviewPressableHeight,
   STACKS_PER_ROW,
-  type AlbumWorldLayout,
-} from "../lib/albumWorldLayout";
-import AlbumStackPreviewOnOverviewScreen from "../components/AlbumStackPreviewOnOverviewScreen";
+  type TrackWorldLayout,
+} from "../lib/trackWorldLayout";
+import TrackStackPreviewOnOverviewScreen from "../components/TrackStackPreviewOnOverviewScreen";
 
 type StackFrame = {
   left: number;
@@ -21,8 +21,8 @@ type StackFrame = {
 };
 
 type Partition16ScreenProps = {
-  layout: AlbumWorldLayout;
-  section: AlbumStack[];
+  layout: TrackWorldLayout;
+  section: TrackStack[];
   progress: SharedValue<number>;
   isActive: boolean;
   revealFrontLayers?: boolean;
@@ -31,8 +31,8 @@ type Partition16ScreenProps = {
   onPressStack: (stackIndex: number) => void;
 };
 
-const FOCUSED_COLUMNS = 4;
-const FOCUSED_ROWS = 4;
+const FOCUSED_COLUMNS = 2;
+const FOCUSED_ROWS = 2;
 const FOCUSED_SECTION_SIDE_PADDING = 8;
 const FOCUSED_SECTION_VERTICAL_PADDING = 16;
 const FOCUSED_SECTION_UPWARD_SHIFT_RATIO = -0.04;
@@ -40,7 +40,7 @@ const FOCUSED_STACK_GAP_X = 28;
 const FOCUSED_STACK_GAP_Y = 56;
 const FOCUSED_SECTION_PADDING = 2;
 
-function getDefaultStackFrame(layout: AlbumWorldLayout, stackIndex: number): StackFrame {
+function getDefaultStackFrame(layout: TrackWorldLayout, stackIndex: number): StackFrame {
   const row = Math.floor(stackIndex / STACKS_PER_ROW);
   const col = stackIndex % STACKS_PER_ROW;
   const previewHeight = getPreviewPressableHeight(layout.previewSize);
@@ -52,7 +52,7 @@ function getDefaultStackFrame(layout: AlbumWorldLayout, stackIndex: number): Sta
   };
 }
 
-function getFocusedStackMetrics(layout: AlbumWorldLayout) {
+function getFocusedStackMetrics(layout: TrackWorldLayout) {
   const width = layout.viewportWidth - FOCUSED_SECTION_SIDE_PADDING * 2;
   const height = layout.viewportHeight - FOCUSED_SECTION_VERTICAL_PADDING * 2;
   const usableWidth = width - FOCUSED_SECTION_PADDING * 2 - FOCUSED_STACK_GAP_X * (FOCUSED_COLUMNS - 1);
@@ -77,7 +77,7 @@ function getFocusedStackMetrics(layout: AlbumWorldLayout) {
   };
 }
 
-function getFocusedStackFrame(layout: AlbumWorldLayout, stackIndex: number): StackFrame {
+function getFocusedStackFrame(layout: TrackWorldLayout, stackIndex: number): StackFrame {
   const metrics = getFocusedStackMetrics(layout);
   const row = Math.floor(stackIndex / FOCUSED_COLUMNS);
   const col = stackIndex % FOCUSED_COLUMNS;
@@ -100,8 +100,8 @@ function PartitionStackPreview({
   onFrontLayerReady,
   onPress,
 }: {
-  layout: AlbumWorldLayout;
-  stack: AlbumStack;
+  layout: TrackWorldLayout;
+  stack: TrackStack;
   stackIndex: number;
   progress: SharedValue<number>;
   isActive: boolean;
@@ -141,7 +141,7 @@ function PartitionStackPreview({
     <Animated.View style={animatedStyle}>
       <Pressable disabled={!isActive} onPress={onPress} style={styles.stackPressable}>
         <Animated.View style={previewScaleStyle}>
-          <AlbumStackPreviewOnOverviewScreen
+          <TrackStackPreviewOnOverviewScreen
             stack={stack}
             size={baseFrame.width}
             revealFrontLayers={revealFrontLayers}
