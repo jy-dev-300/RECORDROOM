@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
-  Easing,
-  runOnJS,
-  useAnimatedScrollHandler,
   type SharedValue,
-  useAnimatedStyle,
+  useAnimatedScrollHandler,
   useSharedValue,
-  withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { TrackStack } from "../data/trackStacks";
 import {
+  getPreviewPressableHeight,
   SECTIONS_PER_ROW,
   type TrackWorldLayout,
 } from "../lib/trackWorldLayout";
@@ -22,18 +19,19 @@ import {
   NAV_TOP_PADDING,
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
-import Partition16Screen from "./Partition16Screen";
+import TrackStackPreviewOnOverviewScreen, {
+  getPreviewJitter,
+  getPreviewParallaxRotation,
+} from "../components/TrackStackPreviewOnOverviewScreen";
 
 type TracksOverviewScreenProps = {
   layout: TrackWorldLayout;
   sections: TrackStack[][];
-  focusedSectionIndex?: number | null;
   previewRevealPrimed?: boolean;
   isMyTracksView?: boolean;
   onPressMyTracks?: () => void;
   onPressAllTracks?: () => void;
   onPreviewRevealPrimed?: () => void;
-  onPressSection: (sectionIndex: number) => void;
   onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
 };
 
@@ -43,13 +41,6 @@ type SectionFrame = {
   width: number;
   height: number;
 };
-
-const FOCUS_ANIMATION_MS = 280;
-const FOCUSED_SECTION_SIDE_PADDING = 8;
-const FOCUSED_SECTION_VERTICAL_PADDING = 16;
-const FOCUSED_SECTION_UPWARD_SHIFT_RATIO = -0.04;
-const OVERVIEW_UPWARD_SHIFT_RATIO = 0.05;
-const PARTITION_TOUCH_SLOP_Y = 18;
 
 function getSectionFrame(layout: TrackWorldLayout, sectionIndex: number): SectionFrame {
   const row = Math.floor(sectionIndex / SECTIONS_PER_ROW);
@@ -62,115 +53,95 @@ function getSectionFrame(layout: TrackWorldLayout, sectionIndex: number): Sectio
   };
 }
 
-function getFocusedSectionFrame(layout: TrackWorldLayout): SectionFrame {
-  const left = FOCUSED_SECTION_SIDE_PADDING;
-  const width = layout.viewportWidth - FOCUSED_SECTION_SIDE_PADDING * 2;
-  const height = layout.viewportHeight - FOCUSED_SECTION_VERTICAL_PADDING * 2;
-  const top = (layout.viewportHeight - height) / 2 - layout.viewportHeight * FOCUSED_SECTION_UPWARD_SHIFT_RATIO;
-  return { left, top, width, height };
-}
-
-type AnimatedSectionProps = {
+type OverviewStackProps = {
   layout: TrackWorldLayout;
-  section: TrackStack[];
+  stack: TrackStack;
   sectionIndex: number;
-  activeSectionIndex: number | null;
-  focusProgress: SharedValue<number>;
-  overlayOpacity: SharedValue<number>;
   revealFrontLayers: boolean;
   showDeferredLayers: boolean;
   scrollY: SharedValue<number>;
-  sectionTop: number;
-  sectionLeft: number;
   onFrontLayerReady: (stackId: string) => void;
-  onPressSection: (sectionIndex: number) => void;
   onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
 };
 
-function AnimatedSection({
+function OverviewStack({
   layout,
-  section,
+  stack,
   sectionIndex,
-  activeSectionIndex,
-  focusProgress,
-  overlayOpacity,
   revealFrontLayers,
   showDeferredLayers,
   scrollY,
-  sectionTop,
-  sectionLeft,
   onFrontLayerReady,
-  onPressSection,
   onPressStack,
-}: AnimatedSectionProps) {
-  const baseFrame = useMemo(() => getSectionFrame(layout, sectionIndex), [layout, sectionIndex]);
-  const focusedFrame = useMemo(() => getFocusedSectionFrame(layout), [layout]);
-  const isFocusedSection = activeSectionIndex === sectionIndex;
-
-  const animatedStyle = useAnimatedStyle(() => {
-    const active = isFocusedSection ? focusProgress.value : 0;
-    const dimmed = activeSectionIndex != null && !isFocusedSection;
-    return {
-      position: "absolute",
-      left: baseFrame.left + (focusedFrame.left - baseFrame.left) * active,
-      top: baseFrame.top + (focusedFrame.top - baseFrame.top) * active,
-      width: baseFrame.width + (focusedFrame.width - baseFrame.width) * active,
-      height: baseFrame.height + (focusedFrame.height - baseFrame.height) * active,
-      zIndex: isFocusedSection ? 20 : 1,
-      opacity: dimmed ? 1 - overlayOpacity.value : 1,
-    };
-  });
+}: OverviewStackProps) {
+  const frame = useMemo(() => getSectionFrame(layout, sectionIndex), [layout, sectionIndex]);
+  const previewSize = layout.previewSize;
+  const previewHeight = useMemo(() => getPreviewPressableHeight(previewSize), [previewSize]);
+  const previewLeft = frame.left + (frame.width - previewSize) / 2;
+  const previewTop = frame.top + frame.height - previewHeight;
+  const previewRotation = useMemo(() => {
+    const jitter = getPreviewJitter(stack.id, 0, previewSize);
+    return (
+      jitter.rotate +
+      getPreviewParallaxRotation(previewLeft + jitter.x + previewSize / 2, layout.viewportWidth)
+    );
+  }, [layout.viewportWidth, previewLeft, previewSize, stack.id]);
 
   return (
-    <Animated.View style={animatedStyle}>
+    <View
+      style={[
+        styles.stackSlot,
+        {
+          left: frame.left,
+          top: frame.top,
+          width: frame.width,
+          height: frame.height,
+        },
+      ]}
+    >
       <Pressable
-        disabled={activeSectionIndex != null}
-        hitSlop={{ top: PARTITION_TOUCH_SLOP_Y, bottom: PARTITION_TOUCH_SLOP_Y, left: 0, right: 0 }}
-        onPress={() => onPressSection(sectionIndex)}
-        style={styles.sectionPressable}
+        hitSlop={12}
+        onPress={() => onPressStack(sectionIndex, 0, previewRotation)}
+        style={[
+          styles.stackPressable,
+          {
+            width: previewSize,
+            height: previewHeight,
+          },
+        ]}
       >
-        <View style={styles.sectionCard}>
-          <Partition16Screen
-            layout={layout}
-            section={section}
-            progress={focusProgress}
-            scrollY={scrollY}
-            sectionTop={sectionTop}
-            sectionLeft={sectionLeft}
-            isActive={isFocusedSection}
-            revealFrontLayers={revealFrontLayers}
-            showDeferredLayers={showDeferredLayers}
-            onFrontLayerReady={onFrontLayerReady}
-            onPressStack={(stackIndex, previewRotationDeg) =>
-              onPressStack(sectionIndex, stackIndex, previewRotationDeg)
-            }
-          />
-        </View>
+        <TrackStackPreviewOnOverviewScreen
+          stack={stack}
+          size={previewSize}
+          stackTop={previewTop}
+          stackLeft={previewLeft}
+          viewportWidth={layout.viewportWidth}
+          viewportHeight={layout.viewportHeight}
+          scrollY={scrollY}
+          revealFrontLayers={revealFrontLayers}
+          showDeferredLayers={showDeferredLayers}
+          onFrontLayerReady={onFrontLayerReady}
+        />
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 
 export default function TracksOverviewScreen({
   layout,
   sections,
-  focusedSectionIndex = null,
   previewRevealPrimed = false,
   isMyTracksView = false,
   onPressMyTracks,
   onPressAllTracks,
   onPreviewRevealPrimed,
-  onPressSection,
   onPressStack,
 }: TracksOverviewScreenProps) {
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeSectionIndex, setActiveSectionIndex] = useState<number | null>(focusedSectionIndex);
   const [readyFrontLayerIds, setReadyFrontLayerIds] = useState<Record<string, true>>({});
   const [revealOverviewFrontLayers, setRevealOverviewFrontLayers] = useState(previewRevealPrimed);
   const [showOverviewFrays, setShowOverviewFrays] = useState(previewRevealPrimed);
-  const focusProgress = useSharedValue(focusedSectionIndex != null ? 1 : 0);
-  const overlayOpacity = useSharedValue(focusedSectionIndex != null ? 1 : 0);
   const scrollY = useSharedValue(0);
   const navTop = insets.top + NAV_TOP_PADDING + 24;
   const GRID_TOP_OFFSET = 36;
@@ -246,42 +217,6 @@ export default function TracksOverviewScreen({
       return { ...current, [stackId]: true };
     });
   };
-
-  useEffect(() => {
-    if (focusedSectionIndex != null) {
-      setActiveSectionIndex(focusedSectionIndex);
-      focusProgress.value = withTiming(1, {
-        duration: FOCUS_ANIMATION_MS,
-        easing: Easing.out(Easing.cubic),
-      });
-      overlayOpacity.value = withTiming(1, {
-        duration: FOCUS_ANIMATION_MS,
-        easing: Easing.out(Easing.cubic),
-      });
-      return;
-    }
-
-    focusProgress.value = withTiming(0, {
-      duration: FOCUS_ANIMATION_MS,
-      easing: Easing.out(Easing.cubic),
-    });
-    overlayOpacity.value = withTiming(
-      0,
-      {
-        duration: FOCUS_ANIMATION_MS,
-        easing: Easing.out(Easing.cubic),
-      },
-      (finished) => {
-        if (finished) {
-          runOnJS(setActiveSectionIndex)(null);
-        }
-      }
-    );
-  }, [focusProgress, focusedSectionIndex, overlayOpacity]);
-
-  const overlayStyle = useAnimatedStyle(() => ({
-    opacity: overlayOpacity.value,
-  }));
   const handleScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
@@ -297,7 +232,7 @@ export default function TracksOverviewScreen({
           {
             width: layout.viewportWidth,
             minHeight: layout.viewportHeight,
-            paddingBottom: 120,
+            paddingBottom: 140,
             transform: [{ translateY: gridOffset }],
           },
         ]}
@@ -306,26 +241,20 @@ export default function TracksOverviewScreen({
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.worldSurface, { width: layout.worldWidth, height: layout.worldHeight }]}>
-          <Animated.View pointerEvents="none" style={[styles.overlay, overlayStyle]} />
           {sections.map((section, sectionIndex) => {
-            const sectionFrame = getSectionFrame(layout, sectionIndex);
+            const stack = section[0];
+            if (!stack) return null;
 
             return (
-              <AnimatedSection
-                key={`section-${sectionIndex}`}
+              <OverviewStack
+                key={stack.id}
                 layout={layout}
-                section={section}
+                stack={stack}
                 sectionIndex={sectionIndex}
-                activeSectionIndex={activeSectionIndex}
-                focusProgress={focusProgress}
-                overlayOpacity={overlayOpacity}
                 revealFrontLayers={revealOverviewFrontLayers}
                 showDeferredLayers={showOverviewFrays}
                 scrollY={scrollY}
-                sectionTop={sectionFrame.top}
-                sectionLeft={sectionFrame.left}
                 onFrontLayerReady={handleFrontLayerReady}
-                onPressSection={onPressSection}
                 onPressStack={onPressStack}
               />
             );
@@ -376,16 +305,12 @@ const styles = StyleSheet.create({
   worldSurface: {
     flex: 1,
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#FFFFFF",
-    zIndex: 10,
+  stackSlot: {
+    position: "absolute",
   },
-  sectionPressable: {
-    flex: 1,
-  },
-  sectionCard: {
-    flex: 1,
+  stackPressable: {
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
   topRightMenuWrap: {
     position: "absolute",

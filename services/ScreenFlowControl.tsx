@@ -329,18 +329,9 @@ export default function ScreenFlowControl() {
       <TracksOverviewScreen
         layout={layout}
         sections={sections}
-        focusedSectionIndex={null}
         previewRevealPrimed={overviewPreviewPrimed}
         isMyTracksView={overviewMode === "my_tracks"}
         onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
-        onPressSection={(sectionIndex) => {
-          const sourceStackIndex = overviewSourceSections[sectionIndex]?.[0];
-          if (sourceStackIndex == null) return;
-          setShouldAnimateDetailIntro(true);
-          setReturningFromPlayOptions(false);
-          setSelectedStackIntroRotation(0);
-          setSelectedStackIndex(sourceStackIndex);
-        }}
         onPressStack={(sectionIndex, stackIndex, previewRotationDeg) => {
           const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
           if (sourceStackIndex == null) return;

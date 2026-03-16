@@ -89,6 +89,25 @@ function getCurrentYearRelease(recording: MusicBrainzRecording) {
   return recording.releases?.find((release) => release.id && release.date?.startsWith(yearPrefix)) ?? null;
 }
 
+function normalizeForDedupe(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getTrackSignature(recording: MusicBrainzRecording) {
+  const title = normalizeForDedupe(recording.title);
+  const artist = normalizeForDedupe(getArtistName(recording["artist-credit"]));
+  return `${artist}::${title}`;
+}
+
+function getAlbumSignature(recording: MusicBrainzRecording, release: MusicBrainzReleaseSummary) {
+  const artist = normalizeForDedupe(getArtistName(recording["artist-credit"]));
+  const releaseTitle = normalizeForDedupe(release.title);
+  return `${artist}::${releaseTitle}`;
+}
+
 function toFeedTrack(recording: MusicBrainzRecording): FeedTrack | null {
   const release = getCurrentYearRelease(recording);
   if (!release?.id) {
@@ -172,6 +191,10 @@ function buildRecordingQuery() {
 
 export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_COUNT): Promise<FeedTrack[]> {
   const seenTrackIds = new Set<number>();
+  const seenReleaseIds = new Set<string>();
+  const seenTrackSignatures = new Set<string>();
+  const seenAlbumSignatures = new Set<string>();
+  const seenArtworkUrls = new Set<string>();
   const perArtistCounts = new Map<number, number>();
   const collected: FeedTrack[] = [];
 
@@ -185,9 +208,20 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
 
     const recordings = shuffle(response.recordings ?? []);
     for (const recording of recordings) {
+      const release = getCurrentYearRelease(recording);
+      if (!release?.id) continue;
+      if (seenReleaseIds.has(release.id)) continue;
+
+      const signature = getTrackSignature(recording);
+      if (signature && seenTrackSignatures.has(signature)) continue;
+
+      const albumSignature = getAlbumSignature(recording, release);
+      if (albumSignature && seenAlbumSignatures.has(albumSignature)) continue;
+
       const track = toFeedTrack(recording);
       if (!track) continue;
       if (seenTrackIds.has(track.id)) continue;
+      if (track.artwork_url && seenArtworkUrls.has(track.artwork_url)) continue;
 
       const artistId = track.user?.id;
       if (artistId != null) {
@@ -197,6 +231,16 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
       }
 
       seenTrackIds.add(track.id);
+      seenReleaseIds.add(release.id);
+      if (signature) {
+        seenTrackSignatures.add(signature);
+      }
+      if (albumSignature) {
+        seenAlbumSignatures.add(albumSignature);
+      }
+      if (track.artwork_url) {
+        seenArtworkUrls.add(track.artwork_url);
+      }
       collected.push(track);
 
       if (collected.length >= targetCount) {

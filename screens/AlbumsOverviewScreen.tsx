@@ -22,7 +22,7 @@ import {
   NAV_TOP_PADDING,
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
-import Partition16Screen from "./Partition16Screen";
+import AlbumStackPreviewOnOverviewScreen from "../components/AlbumStackPreviewOnOverviewScreen";
 
 type AlbumsOverviewScreenProps = {
   layout: AlbumWorldLayout;
@@ -152,15 +152,19 @@ function AnimatedSection({
         style={styles.sectionPressable}
       >
         <Animated.View style={[styles.sectionCard, cardStyle]}>
-          <Partition16Screen
-            layout={layout}
-            section={section}
-            progress={focusProgress}
-            isActive={isFocusedSection}
-            revealFrontLayers={revealFrontLayers}
-            showDeferredLayers={showDeferredLayers}
-            onFrontLayerReady={onFrontLayerReady}
-            onPressStack={(stackIndex) => onPressStack(sectionIndex, stackIndex)}
+          <View style={styles.legacyPreviewWrap}>
+            <AlbumStackPreviewOnOverviewScreen
+              stack={section[0]}
+              size={baseFrame.width}
+              revealFrontLayers={revealFrontLayers}
+              showDeferredLayers={showDeferredLayers}
+              onFrontLayerReady={onFrontLayerReady}
+            />
+          </View>
+          <Pressable
+            disabled={!isFocusedSection}
+            onPress={() => onPressStack(sectionIndex, 0)}
+            style={StyleSheet.absoluteFill}
           />
         </Animated.View>
       </Pressable>
@@ -390,6 +394,11 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     flex: 1,
+  },
+  legacyPreviewWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
   sectionLabelWrap: {
     position: "absolute",

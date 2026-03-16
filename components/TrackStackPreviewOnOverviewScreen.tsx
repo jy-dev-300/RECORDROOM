@@ -8,7 +8,7 @@ import Animated, {
 import type { TrackStack } from "../data/trackStacks";
 import { getPreviewPressableHeight, getPreviewStackOffset } from "../lib/trackWorldLayout";
 
-const PARALLAX_MAX_SHIFT = 42;
+const PARALLAX_MAX_SHIFT = 48;
 const PARALLAX_MAX_ROTATION = 3;
 const PARALLAX_MAX_SHIFT_X = 7;
 

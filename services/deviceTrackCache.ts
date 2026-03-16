@@ -5,7 +5,7 @@ type CachedTracksPayload = {
   tracks: FeedTrack[];
 };
 
-const CACHE_ROOT = `${FileSystem.documentDirectory ?? ""}recordroom-cache-tracks-v1/`;
+const CACHE_ROOT = `${FileSystem.documentDirectory ?? ""}recordroom-cache-tracks-v2/`;
 const PAYLOAD_PATH = `${CACHE_ROOT}daily-tracks.json`;
 const IMAGE_CACHE_DIR = `${CACHE_ROOT}track-artwork/`;
 const PRIORITY_ARTWORK_COUNT = 48;
