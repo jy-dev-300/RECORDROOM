@@ -23,7 +23,7 @@ import GiftCreationPage from "../screens/GiftCreationPage";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleTrackStackScreen, { type StackProject } from "../screens/SingleTrackStackScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
-import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./soundCloudFetchService";
+import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./musicBrainzTrackFetchService";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type OverviewMode = "all" | "my_tracks";
@@ -86,7 +86,7 @@ export default function ScreenFlowControl() {
             void cacheRandomTracks(result);
           })
           .catch((error) => {
-            console.warn("SoundCloud track fetch failed; using fallback track stacks.", error);
+            console.warn("MusicBrainz track fetch failed; using fallback track stacks.", error);
           });
       });
 
