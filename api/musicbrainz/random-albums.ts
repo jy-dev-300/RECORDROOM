@@ -1,4 +1,7 @@
 import { fetchRandomAlbumsByCountry } from "../../services/musicBrainzRandomAlbums";
+// Redis/KV-backed storage is intentionally bypassed for local testing.
+// Keep these imports and the helper below commented for easy restoration later.
+/*
 import {
   acquireDailyAlbumsRefreshLock,
   getStoredDailyAlbums,
@@ -6,6 +9,7 @@ import {
   setStoredDailyAlbums,
   type StoredAlbumsPayload,
 } from "../../services/dailyAlbumsStore";
+*/
 
 type RequestLike = {
   method?: string;
@@ -18,6 +22,7 @@ type ResponseLike = {
   };
 };
 
+/*
 function toStoredPayload(payload: Awaited<ReturnType<typeof fetchRandomAlbumsByCountry>>): StoredAlbumsPayload {
   return {
     countries: payload.countries,
@@ -54,6 +59,7 @@ async function bootstrapIfMissing() {
 
   throw new Error("Daily album payload is not ready yet.");
 }
+*/
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
   if (req.method !== "GET") {
@@ -63,15 +69,15 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const { payload, cacheStatus } = await bootstrapIfMissing();
+    const payload = await fetchRandomAlbumsByCountry();
 
-    res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
-    res.setHeader("X-Recordroom-Cache", cacheStatus);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Recordroom-Cache", "BYPASS");
     res.status(200).json({
       countries: payload.countries,
       countrySections: payload.countrySections,
       allAlbums: payload.allAlbums,
-      generatedAt: payload.generatedAt,
+      generatedAt: new Date().toISOString(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown MusicBrainz fetch failure";
