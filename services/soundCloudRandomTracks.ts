@@ -46,7 +46,7 @@ export type FeedTrack = {
 const SOUNDCLOUD_API_BASE = "https://api-v2.soundcloud.com";
 const MAX_TRACKS_PER_CREATOR = 2;
 const FETCH_PAGE_SIZE = 200;
-const RANDOM_OFFSET_WINDOW = 20_000;
+const MAX_START_PAGE_HOPS = 6;
 
 const SPAM_PATTERNS = [
   "buy beats",
@@ -66,6 +66,7 @@ const SPAM_PATTERNS = [
 
 type SoundCloudCollectionResponse = {
   collection?: SoundCloudTrack[];
+  next_href?: string;
 };
 
 function getSoundCloudClientId() {
@@ -89,6 +90,26 @@ async function soundCloudFetch<T>(path: string, params: Record<string, string | 
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.set(key, String(value));
   });
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`SoundCloud API request failed (${response.status}): ${body}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function soundCloudFetchByUrl<T>(urlString: string) {
+  const url = new URL(urlString);
+  if (!url.searchParams.has("client_id")) {
+    url.searchParams.set("client_id", getSoundCloudClientId());
+  }
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -205,30 +226,52 @@ export function toFeedTrack(track: SoundCloudTrack): FeedTrack {
   };
 }
 
-async function fetchTrackPage(limit: number, offset: number) {
-  const payload = await soundCloudFetch<SoundCloudCollectionResponse>("/tracks", {
+async function fetchTrackPage(limit: number, nextHref?: string | null) {
+  const payload = nextHref
+    ? await soundCloudFetchByUrl<SoundCloudCollectionResponse>(nextHref)
+    : await soundCloudFetch<SoundCloudCollectionResponse>("/tracks", {
     client_id: getSoundCloudClientId(),
     limit,
-    offset,
     linked_partitioning: 1,
   });
 
-  return Array.isArray(payload.collection) ? payload.collection : [];
+  return {
+    collection: Array.isArray(payload.collection) ? payload.collection : [],
+    nextHref: payload.next_href ?? null,
+  };
 }
 
 export async function fetchCandidateTracks(batchSize: number): Promise<SoundCloudTrack[]> {
-  const pageCount = Math.max(1, Math.ceil(batchSize / FETCH_PAGE_SIZE));
-  const pageRequests = Array.from({ length: pageCount }, (_, pageIndex) => {
-    const remaining = Math.max(0, batchSize - pageIndex * FETCH_PAGE_SIZE);
+  const candidates: SoundCloudTrack[] = [];
+  const startHops = Math.floor(Math.random() * (MAX_START_PAGE_HOPS + 1));
+  let nextHref: string | null = null;
+
+  for (let hop = 0; hop < startHops; hop += 1) {
+    const page = await fetchTrackPage(FETCH_PAGE_SIZE, nextHref);
+    nextHref = page.nextHref;
+    if (!nextHref) {
+      break;
+    }
+  }
+
+  while (candidates.length < batchSize) {
+    const remaining = Math.max(0, batchSize - candidates.length);
     const limit = Math.min(FETCH_PAGE_SIZE, remaining);
-    const offset =
-      Math.floor(Math.random() * RANDOM_OFFSET_WINDOW) + pageIndex * FETCH_PAGE_SIZE;
+    const page = await fetchTrackPage(limit, nextHref);
 
-    return fetchTrackPage(limit, offset);
-  });
+    if (page.collection.length === 0) {
+      break;
+    }
 
-  const pages = await Promise.all(pageRequests);
-  return shuffle(pages.flat());
+    candidates.push(...page.collection);
+    nextHref = page.nextHref;
+
+    if (!nextHref) {
+      break;
+    }
+  }
+
+  return shuffle(candidates.slice(0, batchSize));
 }
 
 export async function getFilteredRandomTracks(targetCount = 128): Promise<FeedTrack[]> {
