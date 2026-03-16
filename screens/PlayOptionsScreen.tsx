@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import {
   NAV_BUTTON_SIZE,
   NAV_ICON_SIZE,
@@ -42,7 +43,17 @@ export default function PlayOptionsScreen({
             horizontalDirection="left"
             horizontalCurve={900}
             renderItem={({ item }) => (
-              <View style={[styles.playWheelCard, { backgroundColor: item.color }]} />
+              <View style={styles.playWheelCard}>
+                {item.thumbnail || item.media ? (
+                  <ExpoImage
+                    cachePolicy="memory-disk"
+                    contentFit="cover"
+                    source={{ uri: item.thumbnail || item.media }}
+                    style={styles.playWheelImage}
+                    transition={0}
+                  />
+                ) : null}
+              </View>
             )}
           />
         </View>
@@ -61,7 +72,17 @@ export default function PlayOptionsScreen({
             horizontalDirection="right"
             horizontalCurve={900}
             renderItem={({ item }) => (
-              <View style={[styles.playWheelCard, { backgroundColor: item.color }]} />
+              <View style={styles.playWheelCard}>
+                {item.thumbnail || item.media ? (
+                  <ExpoImage
+                    cachePolicy="memory-disk"
+                    contentFit="cover"
+                    source={{ uri: item.thumbnail || item.media }}
+                    style={styles.playWheelImage}
+                    transition={0}
+                  />
+                ) : null}
+              </View>
             )}
           />
         </View>
@@ -112,8 +133,10 @@ const styles = StyleSheet.create({
   playWheelCard: {
     flex: 1,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
+    overflow: "hidden",
+  },
+  playWheelImage: {
+    flex: 1,
   },
 });
 

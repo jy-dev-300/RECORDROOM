@@ -27,11 +27,13 @@ import Partition16Screen from "./Partition16Screen";
 type AlbumsOverviewScreenProps = {
   layout: AlbumWorldLayout;
   sections: AlbumStack[][];
-  sectionGenres?: string[];
+  sectionCountries?: string[];
   focusedSectionIndex?: number | null;
+  previewRevealPrimed?: boolean;
   isMyAlbumsView?: boolean;
   onPressMyAlbums?: () => void;
   onPressAllAlbums?: () => void;
+  onPreviewRevealPrimed?: () => void;
   onPressSection: (sectionIndex: number) => void;
   onPressStack: (sectionIndex: number, stackIndex: number) => void;
 };
@@ -51,8 +53,8 @@ const OVERVIEW_UPWARD_SHIFT_RATIO = 0.05;
 const PARTITION_TOUCH_SLOP_Y = 18;
 const SECTION_LABEL_OFFSET = 22;
 
-function formatGenreLabel(genre: string) {
-  return genre
+function formatCountryLabel(country: string) {
+  return country
     .split("-")
     .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
     .join(" ");
@@ -81,10 +83,13 @@ type AnimatedSectionProps = {
   layout: AlbumWorldLayout;
   section: AlbumStack[];
   sectionIndex: number;
-  sectionGenre?: string;
+  sectionCountry?: string;
   activeSectionIndex: number | null;
   focusProgress: SharedValue<number>;
   overlayOpacity: SharedValue<number>;
+  revealFrontLayers: boolean;
+  showDeferredLayers: boolean;
+  onFrontLayerReady: (stackId: string) => void;
   onPressSection: (sectionIndex: number) => void;
   onPressStack: (sectionIndex: number, stackIndex: number) => void;
 };
@@ -93,10 +98,13 @@ function AnimatedSection({
   layout,
   section,
   sectionIndex,
-  sectionGenre,
+  sectionCountry,
   activeSectionIndex,
   focusProgress,
   overlayOpacity,
+  revealFrontLayers,
+  showDeferredLayers,
+  onFrontLayerReady,
   onPressSection,
   onPressStack,
 }: AnimatedSectionProps) {
@@ -132,9 +140,9 @@ function AnimatedSection({
 
   return (
     <Animated.View style={animatedStyle}>
-      {sectionGenre ? (
+      {sectionCountry ? (
         <View pointerEvents="none" style={styles.sectionLabelWrap}>
-          <Text style={styles.sectionLabel}>{formatGenreLabel(sectionGenre)}</Text>
+          <Text style={styles.sectionLabel}>{formatCountryLabel(sectionCountry)}</Text>
         </View>
       ) : null}
       <Pressable
@@ -149,6 +157,9 @@ function AnimatedSection({
             section={section}
             progress={focusProgress}
             isActive={isFocusedSection}
+            revealFrontLayers={revealFrontLayers}
+            showDeferredLayers={showDeferredLayers}
+            onFrontLayerReady={onFrontLayerReady}
             onPressStack={(stackIndex) => onPressStack(sectionIndex, stackIndex)}
           />
         </Animated.View>
@@ -160,20 +171,96 @@ function AnimatedSection({
 export default function AlbumsOverviewScreen({
   layout,
   sections,
-  sectionGenres = [],
+  sectionCountries = [],
   focusedSectionIndex = null,
+  previewRevealPrimed = false,
   isMyAlbumsView = false,
   onPressMyAlbums,
   onPressAllAlbums,
+  onPreviewRevealPrimed,
   onPressSection,
   onPressStack,
 }: AlbumsOverviewScreenProps) {
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeSectionIndex, setActiveSectionIndex] = useState<number | null>(focusedSectionIndex);
+  const [readyFrontLayerIds, setReadyFrontLayerIds] = useState<Record<string, true>>({});
+  const [revealOverviewFrontLayers, setRevealOverviewFrontLayers] = useState(previewRevealPrimed);
+  const [showOverviewFrays, setShowOverviewFrays] = useState(previewRevealPrimed);
   const focusProgress = useSharedValue(focusedSectionIndex != null ? 1 : 0);
   const overlayOpacity = useSharedValue(focusedSectionIndex != null ? 1 : 0);
   const overviewShift = layout.viewportHeight * OVERVIEW_UPWARD_SHIFT_RATIO;
+  const totalStackCount = useMemo(
+    () => sections.reduce((count, section) => count + section.length, 0),
+    [sections]
+  );
+
+  useEffect(() => {
+    setReadyFrontLayerIds({});
+    if (previewRevealPrimed) {
+      setRevealOverviewFrontLayers(true);
+      setShowOverviewFrays(true);
+      return;
+    }
+
+    setRevealOverviewFrontLayers(totalStackCount === 0);
+    setShowOverviewFrays(totalStackCount === 0);
+  }, [previewRevealPrimed, totalStackCount, sections]);
+
+  useEffect(() => {
+    if (previewRevealPrimed) {
+      setRevealOverviewFrontLayers(true);
+      setShowOverviewFrays(true);
+    }
+  }, [previewRevealPrimed]);
+
+  useEffect(() => {
+    if (revealOverviewFrontLayers || totalStackCount === 0) {
+      return;
+    }
+
+    if (Object.keys(readyFrontLayerIds).length >= totalStackCount) {
+      setRevealOverviewFrontLayers(true);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setRevealOverviewFrontLayers(true);
+    }, 900);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [readyFrontLayerIds, revealOverviewFrontLayers, totalStackCount]);
+
+  useEffect(() => {
+    if (!revealOverviewFrontLayers || showOverviewFrays) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setShowOverviewFrays(true);
+    }, 120);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [revealOverviewFrontLayers, showOverviewFrays]);
+
+  useEffect(() => {
+    if (showOverviewFrays) {
+      onPreviewRevealPrimed?.();
+    }
+  }, [onPreviewRevealPrimed, showOverviewFrays]);
+
+  const handleFrontLayerReady = (stackId: string) => {
+    setReadyFrontLayerIds((current) => {
+      if (current[stackId]) {
+        return current;
+      }
+      return { ...current, [stackId]: true };
+    });
+  };
 
   useEffect(() => {
     if (focusedSectionIndex != null) {
@@ -236,10 +323,13 @@ export default function AlbumsOverviewScreen({
               layout={layout}
               section={section}
               sectionIndex={sectionIndex}
-              sectionGenre={sectionGenres[sectionIndex]}
+              sectionCountry={sectionCountries[sectionIndex]}
               activeSectionIndex={activeSectionIndex}
               focusProgress={focusProgress}
               overlayOpacity={overlayOpacity}
+              revealFrontLayers={revealOverviewFrontLayers}
+              showDeferredLayers={showOverviewFrays}
+              onFrontLayerReady={handleFrontLayerReady}
               onPressSection={onPressSection}
               onPressStack={onPressStack}
             />

@@ -1,4 +1,6 @@
+import { memo, useEffect, useRef } from "react";
 import { StyleSheet, View } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import type { AlbumStack } from "../data/albumStacks";
 import { getPreviewPressableHeight, getPreviewStackOffset } from "../lib/albumWorldLayout";
 
@@ -26,19 +28,46 @@ function getPreviewJitter(stackId: string, layerIndex: number, size: number) {
 type AlbumStackPreviewOnOverviewScreenProps = {
   stack: AlbumStack;
   size: number;
+  revealFrontLayers?: boolean;
+  showDeferredLayers?: boolean;
+  onFrontLayerReady?: (stackId: string) => void;
 };
 
-export default function AlbumStackPreviewOnOverviewScreen({ stack, size }: AlbumStackPreviewOnOverviewScreenProps) {
+function AlbumStackPreviewOnOverviewScreen({
+  stack,
+  size,
+  revealFrontLayers = true,
+  showDeferredLayers = true,
+  onFrontLayerReady,
+}: AlbumStackPreviewOnOverviewScreenProps) {
   const layers = stack.projects.slice(0, 5);
   const stackHeight = getPreviewPressableHeight(size);
+  const visibleLayers = showDeferredLayers ? layers : layers.slice(0, 1);
+  const frontLayerReportedRef = useRef(false);
+
+  useEffect(() => {
+    frontLayerReportedRef.current = false;
+  }, [stack.id]);
+
+  useEffect(() => {
+    const frontProject = layers[0];
+    if (!frontProject || frontProject.thumbnail || frontProject.media) {
+      return;
+    }
+
+    if (!frontLayerReportedRef.current) {
+      frontLayerReportedRef.current = true;
+      onFrontLayerReady?.(stack.id);
+    }
+  }, [layers, onFrontLayerReady, stack.id]);
 
   return (
     <View style={[styles.stackPreview, { width: size, height: stackHeight }]}>
-      {layers
+      {visibleLayers
         .slice()
         .reverse()
         .map((project, reverseIndex) => {
-          const rel = layers.length - 1 - reverseIndex;
+          const rel = visibleLayers.length - 1 - reverseIndex;
           const translateY = -getPreviewStackOffset(size, rel);
           const jitter = getPreviewJitter(stack.id, rel, size);
 
@@ -48,7 +77,6 @@ export default function AlbumStackPreviewOnOverviewScreen({ stack, size }: Album
               style={[
                 styles.previewLayer,
                 {
-                  backgroundColor: project.color,
                   width: size,
                   height: size,
                   bottom: 0,
@@ -61,12 +89,33 @@ export default function AlbumStackPreviewOnOverviewScreen({ stack, size }: Album
                   ],
                 },
               ]}
-            />
+            >
+              {project.thumbnail || project.media ? (
+                <ExpoImage
+                  cachePolicy="memory-disk"
+                  contentFit="cover"
+                  onLoadEnd={() => {
+                    if (rel === 0 && !frontLayerReportedRef.current) {
+                      frontLayerReportedRef.current = true;
+                      onFrontLayerReady?.(stack.id);
+                    }
+                  }}
+                  source={{ uri: project.thumbnail || project.media }}
+                  style={[
+                    styles.previewImage,
+                    rel === 0 && !revealFrontLayers ? styles.hiddenFrontImage : null,
+                  ]}
+                  transition={0}
+                />
+              ) : null}
+            </View>
           );
         })}
     </View>
   );
 }
+
+export default memo(AlbumStackPreviewOnOverviewScreen);
 
 const styles = StyleSheet.create({
   stackPreview: {
@@ -75,8 +124,12 @@ const styles = StyleSheet.create({
   previewLayer: {
     position: "absolute",
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
+  },
+  previewImage: {
+    flex: 1,
+  },
+  hiddenFrontImage: {
+    opacity: 0,
   },
 });
 

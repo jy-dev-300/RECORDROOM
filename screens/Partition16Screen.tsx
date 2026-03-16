@@ -25,6 +25,9 @@ type Partition16ScreenProps = {
   section: AlbumStack[];
   progress: SharedValue<number>;
   isActive: boolean;
+  revealFrontLayers?: boolean;
+  showDeferredLayers?: boolean;
+  onFrontLayerReady?: (stackId: string) => void;
   onPressStack: (stackIndex: number) => void;
 };
 
@@ -92,6 +95,9 @@ function PartitionStackPreview({
   stackIndex,
   progress,
   isActive,
+  revealFrontLayers,
+  showDeferredLayers,
+  onFrontLayerReady,
   onPress,
 }: {
   layout: AlbumWorldLayout;
@@ -99,6 +105,9 @@ function PartitionStackPreview({
   stackIndex: number;
   progress: SharedValue<number>;
   isActive: boolean;
+  revealFrontLayers?: boolean;
+  showDeferredLayers?: boolean;
+  onFrontLayerReady?: (stackId: string) => void;
   onPress: () => void;
 }) {
   const baseFrame = useMemo(() => getDefaultStackFrame(layout, stackIndex), [layout, stackIndex]);
@@ -132,7 +141,13 @@ function PartitionStackPreview({
     <Animated.View style={animatedStyle}>
       <Pressable disabled={!isActive} onPress={onPress} style={styles.stackPressable}>
         <Animated.View style={previewScaleStyle}>
-          <AlbumStackPreviewOnOverviewScreen stack={stack} size={baseFrame.width} />
+          <AlbumStackPreviewOnOverviewScreen
+            stack={stack}
+            size={baseFrame.width}
+            revealFrontLayers={revealFrontLayers}
+            showDeferredLayers={showDeferredLayers}
+            onFrontLayerReady={onFrontLayerReady}
+          />
         </Animated.View>
       </Pressable>
     </Animated.View>
@@ -144,6 +159,9 @@ export default function Partition16Screen({
   section,
   progress,
   isActive,
+  revealFrontLayers,
+  showDeferredLayers,
+  onFrontLayerReady,
   onPressStack,
 }: Partition16ScreenProps) {
   return (
@@ -156,6 +174,9 @@ export default function Partition16Screen({
           stackIndex={stackIndex}
           progress={progress}
           isActive={isActive}
+          revealFrontLayers={revealFrontLayers}
+          showDeferredLayers={showDeferredLayers}
+          onFrontLayerReady={onFrontLayerReady}
           onPress={() => onPressStack(stackIndex)}
         />
       ))}

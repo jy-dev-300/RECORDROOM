@@ -15,6 +15,7 @@ export type StackProject = {
   id: string;
   title: string;
   media: string;
+  thumbnail?: string;
   type: "image" | "video";
   color: string;
   href?: string;
@@ -39,7 +40,6 @@ function normalise(value: number, size: number) {
 }
 
 const STRIP = 24;
-const VISIBLE_DEPTH = 4;
 const EASE = 0.12;
 const TOUCH_EASE = 0.07;
 const SNAP_EPSILON = 0.0009;
@@ -86,6 +86,10 @@ function getIncomingCardOpacity() {
   return 1;
 }
 
+function getVisibleDepth(projectCount: number) {
+  return clamp(projectCount - 1, 0, 4);
+}
+
 export default function SingleAlbumStackScreen({
   projects,
   enableIntroAnimation = true,
@@ -100,6 +104,7 @@ export default function SingleAlbumStackScreen({
   stackWidthOverride,
 }: SingleAlbumStackScreenProps) {
   const N = projects.length;
+  const visibleDepth = getVisibleDepth(N);
   const [viewportWidth, setViewportWidth] = useState(Dimensions.get("window").width);
   const [viewportHeight, setViewportHeight] = useState(Dimensions.get("window").height);
   const [stackReady, setStackReady] = useState(false);
@@ -383,7 +388,7 @@ export default function SingleAlbumStackScreen({
               const t = clamp((roll - EARLY_WRAP_START) / (1 - EARLY_WRAP_START), 0, 1);
               const tFast = 1 - Math.pow(1 - t, 3);
               const wrappedRel = N + rel;
-              const backRel = Math.min(wrappedRel, VISIBLE_DEPTH + 1);
+              const backRel = Math.min(wrappedRel, visibleDepth + 1);
               const backScale = 1;
               const backTyStrip = -(backRel * STRIP);
               const backTy = backTyStrip - (cardHeight / 2) * (1 - backScale);
@@ -416,10 +421,10 @@ export default function SingleAlbumStackScreen({
                 }
                 style={styles.mediaFill}
               >
-                {!loadedMap[project.id] ? <View style={styles.loadingFill} /> : null}
+                {null}
               </ImageBackground>
             ) : (
-              <View style={[styles.colorSurface, { backgroundColor: project.color }]} />
+              <View style={styles.transparentSurface} />
             );
 
           const messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
@@ -568,14 +573,8 @@ const styles = StyleSheet.create({
   mediaFill: {
     ...StyleSheet.absoluteFillObject,
   },
-  colorSurface: {
+  transparentSurface: {
     ...StyleSheet.absoluteFillObject,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-  },
-  loadingFill: {
-    flex: 1,
-    backgroundColor: "#000000",
   },
   actionButton: {
     width: 52,

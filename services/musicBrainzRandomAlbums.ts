@@ -1,17 +1,17 @@
 import type { Album } from "../data/albumsData";
-import { musicBrainzGenres } from "../data/musicBrainzGenres";
+import { musicBrainzCountries } from "../data/musicBrainzCountries";
 
 const MUSICBRAINZ_API_BASE = "https://musicbrainz.org/ws/2";
-const RANDOM_GENRE_COUNT = 8;
-const ALBUMS_PER_GENRE = 16;
+const RANDOM_COUNTRY_COUNT = 8;
+const ALBUMS_PER_COUNTRY = 16;
 const SEARCH_PAGE_SIZE = 50;
-const MAX_OFFSET_STEPS = 3;
-const REQUEST_DELAY_MS = 1100;
-const COVER_ART_SIZE = 250;
+const MAX_OFFSET_STEPS = 5;
+const COVER_ART_SIZE = 140;
 const USER_AGENT = "RECORDROOM/1.0.0 ( https://recordroom.vercel.app )";
+const MIN_REQUEST_INTERVAL_MS = 1100;
 
-export type GenreAlbumSection = {
-  genre: string;
+export type CountryAlbumSection = {
+  country: string;
   albums: Album[];
 };
 
@@ -29,9 +29,18 @@ type MusicBrainzReleaseGroup = {
   "artist-credit"?: MusicBrainzArtistCredit[];
 };
 
-type MusicBrainzReleaseGroupSearchResponse = {
+type MusicBrainzRelease = {
+  id: string;
+  title: string;
+  date?: string;
+  country?: string;
+  "artist-credit"?: MusicBrainzArtistCredit[];
+  "release-group"?: MusicBrainzReleaseGroup;
+};
+
+type MusicBrainzReleaseSearchResponse = {
   count: number;
-  "release-groups": MusicBrainzReleaseGroup[];
+  releases: MusicBrainzRelease[];
 };
 
 function shuffle<T>(items: T[]) {
@@ -51,16 +60,43 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let lastMusicBrainzRequestAt = 0;
+let musicBrainzRequestQueue: Promise<void> = Promise.resolve();
+
+async function waitForMusicBrainzRateLimit() {
+  const previous = musicBrainzRequestQueue;
+  let release!: () => void;
+  musicBrainzRequestQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+
+  const now = Date.now();
+  const elapsed = now - lastMusicBrainzRequestAt;
+  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+    await delay(MIN_REQUEST_INTERVAL_MS - elapsed);
+  }
+
+  lastMusicBrainzRequestAt = Date.now();
+  release();
+}
+
 function buildCoverArtUrl(releaseGroupId: string) {
   return `https://coverartarchive.org/release-group/${releaseGroupId}/front-${COVER_ART_SIZE}`;
 }
 
-function toAlbum(releaseGroup: MusicBrainzReleaseGroup): Album {
+function toAlbum(release: MusicBrainzRelease): Album | null {
+  const releaseGroup = release["release-group"];
+  if (!releaseGroup?.id) {
+    return null;
+  }
+
   return {
     id: releaseGroup.id,
-    name: releaseGroup.title,
+    name: releaseGroup.title || release.title,
     artists:
-      releaseGroup["artist-credit"]?.map((credit) => ({
+      (release["artist-credit"] ?? releaseGroup["artist-credit"])?.map((credit) => ({
         name: credit.artist?.name || credit.name || "Unknown Artist",
       })) ?? [],
     images: [
@@ -70,12 +106,14 @@ function toAlbum(releaseGroup: MusicBrainzReleaseGroup): Album {
         height: COVER_ART_SIZE,
       },
     ],
-    release_date: releaseGroup["first-release-date"] || "",
+    release_date: release.date || releaseGroup["first-release-date"] || "",
     total_tracks: 0,
   };
 }
 
 async function musicBrainzFetch<T>(path: string): Promise<T> {
+  await waitForMusicBrainzRateLimit();
+
   const response = await fetch(`${MUSICBRAINZ_API_BASE}${path}`, {
     headers: {
       Accept: "application/json",
@@ -91,26 +129,42 @@ async function musicBrainzFetch<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function fetchGenreAlbums(genre: string, excludedAlbumIds = new Set<string>()) {
+function getCurrentYearDateRange() {
+  const year = new Date().getFullYear();
+  return {
+    year,
+    start: `${year}-01-01`,
+    end: `${year}-12-31`,
+  };
+}
+
+async function fetchCountryAlbums(
+  countryCode: string,
+  excludedAlbumIds = new Set<string>()
+) {
   const collected = new Map<string, Album>();
   let totalCount = Number.POSITIVE_INFINITY;
+  const { start, end } = getCurrentYearDateRange();
 
-  for (let step = 0; step < MAX_OFFSET_STEPS && collected.size < ALBUMS_PER_GENRE; step += 1) {
+  for (let step = 0; step < MAX_OFFSET_STEPS && collected.size < ALBUMS_PER_COUNTRY; step += 1) {
     const offsetBase = step * SEARCH_PAGE_SIZE;
     const randomOffset = offsetBase === 0 ? 0 : offsetBase + Math.floor(Math.random() * SEARCH_PAGE_SIZE);
-    const query = encodeURIComponent(`primarytype:album AND tag:"${genre}"`);
-    const response = await musicBrainzFetch<MusicBrainzReleaseGroupSearchResponse>(
-      `/release-group?query=${query}&fmt=json&limit=${SEARCH_PAGE_SIZE}&offset=${randomOffset}`
+    const query = encodeURIComponent(
+      `primarytype:album AND country:${countryCode} AND date:[${start} TO ${end}]`
+    );
+    const response = await musicBrainzFetch<MusicBrainzReleaseSearchResponse>(
+      `/release?query=${query}&fmt=json&limit=${SEARCH_PAGE_SIZE}&offset=${randomOffset}`
     );
 
     totalCount = response.count;
 
-    for (const releaseGroup of shuffle(response["release-groups"] ?? [])) {
-      if (!releaseGroup?.id) continue;
-      if (excludedAlbumIds.has(releaseGroup.id) || collected.has(releaseGroup.id)) continue;
+    for (const release of shuffle(response.releases ?? [])) {
+      const album = toAlbum(release);
+      if (!album?.id) continue;
+      if (excludedAlbumIds.has(album.id) || collected.has(album.id)) continue;
 
-      collected.set(releaseGroup.id, toAlbum(releaseGroup));
-      if (collected.size >= ALBUMS_PER_GENRE) {
+      collected.set(album.id, album);
+      if (collected.size >= ALBUMS_PER_COUNTRY) {
         break;
       }
     }
@@ -118,37 +172,31 @@ async function fetchGenreAlbums(genre: string, excludedAlbumIds = new Set<string
     if (offsetBase + SEARCH_PAGE_SIZE >= totalCount) {
       break;
     }
-
-    await delay(REQUEST_DELAY_MS);
   }
 
   return [...collected.values()];
 }
 
-export async function fetchRandomAlbumsByGenre() {
-  const selectedGenres = sampleSize([...musicBrainzGenres], RANDOM_GENRE_COUNT);
+export async function fetchRandomAlbumsByCountry() {
+  const selectedCountries = sampleSize([...musicBrainzCountries], RANDOM_COUNTRY_COUNT);
   const albumMap = new Map<string, Album>();
-  const genreSections: GenreAlbumSection[] = [];
+  const countrySections: CountryAlbumSection[] = [];
 
-  for (let index = 0; index < selectedGenres.length; index += 1) {
-    const genre = selectedGenres[index];
-    const genreAlbums = await fetchGenreAlbums(genre, new Set(albumMap.keys()));
-    genreSections.push({ genre, albums: genreAlbums });
-    genreAlbums.forEach((album) => {
+  for (let index = 0; index < selectedCountries.length; index += 1) {
+    const country = selectedCountries[index];
+    const countryAlbums = await fetchCountryAlbums(country.code, new Set(albumMap.keys()));
+    countrySections.push({ country: country.name, albums: countryAlbums });
+    countryAlbums.forEach((album) => {
       albumMap.set(album.id, album);
     });
-
-    if (index < selectedGenres.length - 1) {
-      await delay(REQUEST_DELAY_MS);
-    }
   }
 
-  const allAlbums = [...albumMap.values()].slice(0, RANDOM_GENRE_COUNT * ALBUMS_PER_GENRE);
+  const allAlbums = [...albumMap.values()].slice(0, RANDOM_COUNTRY_COUNT * ALBUMS_PER_COUNTRY);
   const allAlbumsById = new Map(allAlbums.map((album) => [album.id, album]));
 
   return {
-    genres: selectedGenres,
-    genreSections,
+    countries: selectedCountries.map((country) => country.name),
+    countrySections,
     allAlbums,
     allAlbumsById,
   };

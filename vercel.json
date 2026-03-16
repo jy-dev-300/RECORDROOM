@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/musicbrainz/refresh-daily",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}

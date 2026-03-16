@@ -6,7 +6,12 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { albumStacks, createAlbumStacksFromGenreSections, type GenreAlbumSection } from "../data/albumStacks";
+import {
+  albumStacks,
+  createAlbumStackSectionsFromCountrySections,
+  createAlbumStacksFromCountrySections,
+  type CountryAlbumSection,
+} from "../data/albumStacks";
 import {
   buildAlbumWorldLayout,
   chunkItems,
@@ -26,7 +31,11 @@ import AlbumsOverviewScreen from "../screens/AlbumsOverviewScreen";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleAlbumStackScreen, { type StackProject } from "../screens/SingleAlbumStackScreen";
-import { fetchRandomAlbumsByGenre } from "./musicBrainzFetchService";
+import {
+  cacheRandomAlbumsByCountry,
+  fetchRandomAlbumsByCountry,
+  loadCachedRandomAlbumsByCountry,
+} from "./musicBrainzFetchService";
 
 type OverviewMode = "all" | "my_albums";
 type SavedAlbumDictionary = {
@@ -48,7 +57,8 @@ export default function ScreenFlowControl() {
   const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
   const [focusedSectionIndex, setFocusedSectionIndex] = useState<number | null>(null);
   const [savedAlbumsSet, setSavedAlbumsSet] = useState<Record<string, SavedAlbumDictionary>>({});
-  const [musicBrainzSections, setMusicBrainzSections] = useState<GenreAlbumSection[]>([]);
+  const [musicBrainzSections, setMusicBrainzSections] = useState<CountryAlbumSection[]>([]);
+  const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
 
   const focusedSectionRef = useRef<number | null>(null);
   const backGestureTriggered = useSharedValue(false);
@@ -57,27 +67,46 @@ export default function ScreenFlowControl() {
   const activeAlbumStacks = useMemo(
     () =>
       musicBrainzSections.length > 0
-        ? createAlbumStacksFromGenreSections(musicBrainzSections)
+        ? createAlbumStacksFromCountrySections(musicBrainzSections)
         : albumStacks,
     [musicBrainzSections]
   );
-  const sectionGenres = useMemo(
-    () => musicBrainzSections.map((section) => section.genre),
+  const sectionCountries = useMemo(
+    () => musicBrainzSections.map((section) => section.country),
     [musicBrainzSections]
+  );
+  const allAlbumSections = useMemo(
+    () =>
+      musicBrainzSections.length > 0
+        ? createAlbumStackSectionsFromCountrySections(musicBrainzSections)
+        : chunkItems(activeAlbumStacks, STACKS_PER_SECTION),
+    [activeAlbumStacks, musicBrainzSections]
   );
 
   useEffect(() => {
     let cancelled = false;
 
-    fetchRandomAlbumsByGenre()
-      .then((result) => {
-        if (!cancelled) {
-          setMusicBrainzSections(result.genreSections);
+    loadCachedRandomAlbumsByCountry()
+      .then((cached) => {
+        if (!cancelled && cached) {
+          setMusicBrainzSections(cached.countrySections);
         }
       })
-      .catch((error) => {
-        console.warn("MusicBrainz album fetch failed; using fallback album stacks.", error);
-      });
+      .catch(() => {
+        // Ignore cache read failures and continue to network.
+      })
+      .finally(() => {
+        fetchRandomAlbumsByCountry()
+          .then((result) => {
+            if (!cancelled) {
+              setMusicBrainzSections(result.countrySections);
+            }
+            void cacheRandomAlbumsByCountry(result);
+          })
+          .catch((error) => {
+            console.warn("MusicBrainz album fetch failed; using fallback album stacks.", error);
+          });
+      })
 
     return () => {
       cancelled = true;
@@ -120,7 +149,22 @@ export default function ScreenFlowControl() {
       .filter((index) => index >= 0);
   }, [activeAlbumStacks, overviewMode, projectLookup, savedAlbumsSet]);
 
-  const sections = useMemo(() => chunkItems(overviewStacks, STACKS_PER_SECTION), [overviewStacks]);
+  const sections = useMemo(() => {
+    if (overviewMode === "all") {
+      return allAlbumSections;
+    }
+
+    return chunkItems(overviewStacks, STACKS_PER_SECTION);
+  }, [allAlbumSections, overviewMode, overviewStacks]);
+  const overviewSourceSections = useMemo(() => {
+    if (overviewMode === "all") {
+      return allAlbumSections.map((section) =>
+        section.map((stack) => activeAlbumStacks.findIndex((candidate) => candidate.id === stack.id))
+      );
+    }
+
+    return chunkItems(overviewSourceStackIndexes, STACKS_PER_SECTION);
+  }, [activeAlbumStacks, allAlbumSections, overviewMode, overviewSourceStackIndexes]);
   const overviewShift = layout.viewportHeight * 0.05;
   const navTop = insets.top + NAV_TOP_PADDING - overviewShift;
 
@@ -323,14 +367,15 @@ export default function ScreenFlowControl() {
       <AlbumsOverviewScreen
         layout={layout}
         sections={sections}
-        sectionGenres={overviewMode === "all" ? sectionGenres : []}
+        sectionCountries={overviewMode === "all" ? sectionCountries : []}
         focusedSectionIndex={focusedSectionIndex}
+        previewRevealPrimed={overviewPreviewPrimed}
         isMyAlbumsView={overviewMode === "my_albums"}
+        onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
         onPressSection={focusSection}
         onPressStack={(sectionIndex, stackIndex) => {
           if (focusedSectionIndex == null || sectionIndex !== focusedSectionIndex) return;
-          const absoluteIndex = sectionIndex * STACKS_PER_SECTION + stackIndex;
-          const sourceStackIndex = overviewSourceStackIndexes[absoluteIndex];
+          const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
           if (sourceStackIndex == null) return;
           setShouldAnimateDetailIntro(true);
           setReturningFromPlayOptions(false);
