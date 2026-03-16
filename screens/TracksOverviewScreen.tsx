@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
   runOnJS,
+  useAnimatedScrollHandler,
   type SharedValue,
   useAnimatedStyle,
   useSharedValue,
@@ -33,7 +34,7 @@ type TracksOverviewScreenProps = {
   onPressAllTracks?: () => void;
   onPreviewRevealPrimed?: () => void;
   onPressSection: (sectionIndex: number) => void;
-  onPressStack: (sectionIndex: number, stackIndex: number) => void;
+  onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
 };
 
 type SectionFrame = {
@@ -78,9 +79,12 @@ type AnimatedSectionProps = {
   overlayOpacity: SharedValue<number>;
   revealFrontLayers: boolean;
   showDeferredLayers: boolean;
+  scrollY: SharedValue<number>;
+  sectionTop: number;
+  sectionLeft: number;
   onFrontLayerReady: (stackId: string) => void;
   onPressSection: (sectionIndex: number) => void;
-  onPressStack: (sectionIndex: number, stackIndex: number) => void;
+  onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
 };
 
 function AnimatedSection({
@@ -92,6 +96,9 @@ function AnimatedSection({
   overlayOpacity,
   revealFrontLayers,
   showDeferredLayers,
+  scrollY,
+  sectionTop,
+  sectionLeft,
   onFrontLayerReady,
   onPressSection,
   onPressStack,
@@ -127,11 +134,16 @@ function AnimatedSection({
             layout={layout}
             section={section}
             progress={focusProgress}
+            scrollY={scrollY}
+            sectionTop={sectionTop}
+            sectionLeft={sectionLeft}
             isActive={isFocusedSection}
             revealFrontLayers={revealFrontLayers}
             showDeferredLayers={showDeferredLayers}
             onFrontLayerReady={onFrontLayerReady}
-            onPressStack={(stackIndex) => onPressStack(sectionIndex, stackIndex)}
+            onPressStack={(stackIndex, previewRotationDeg) =>
+              onPressStack(sectionIndex, stackIndex, previewRotationDeg)
+            }
           />
         </View>
       </Pressable>
@@ -159,7 +171,10 @@ export default function TracksOverviewScreen({
   const [showOverviewFrays, setShowOverviewFrays] = useState(previewRevealPrimed);
   const focusProgress = useSharedValue(focusedSectionIndex != null ? 1 : 0);
   const overlayOpacity = useSharedValue(focusedSectionIndex != null ? 1 : 0);
-  const overviewShift = layout.viewportHeight * OVERVIEW_UPWARD_SHIFT_RATIO;
+  const scrollY = useSharedValue(0);
+  const navTop = insets.top + NAV_TOP_PADDING + 24;
+  const GRID_TOP_OFFSET = 36;
+  const gridOffset = navTop - layout.megaBlockTop + GRID_TOP_OFFSET;
   const totalStackCount = useMemo(
     () => sections.reduce((count, section) => count + section.length, 0),
     [sections]
@@ -267,40 +282,57 @@ export default function TracksOverviewScreen({
   const overlayStyle = useAnimatedStyle(() => ({
     opacity: overlayOpacity.value,
   }));
+  const handleScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.value = event.contentOffset.y;
+    },
+  });
 
   return (
     <View style={styles.root}>
-      <View
-        style={[
+      <Animated.ScrollView
+        bounces
+        contentContainerStyle={[
           styles.viewport,
           {
             width: layout.viewportWidth,
-            height: layout.viewportHeight,
-            transform: [{ translateY: -overviewShift }],
+            minHeight: layout.viewportHeight,
+            paddingBottom: 120,
+            transform: [{ translateY: gridOffset }],
           },
         ]}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
       >
         <View style={[styles.worldSurface, { width: layout.worldWidth, height: layout.worldHeight }]}>
           <Animated.View pointerEvents="none" style={[styles.overlay, overlayStyle]} />
-          {sections.map((section, sectionIndex) => (
-            <AnimatedSection
-              key={`section-${sectionIndex}`}
-              layout={layout}
-              section={section}
-              sectionIndex={sectionIndex}
-              activeSectionIndex={activeSectionIndex}
-              focusProgress={focusProgress}
-              overlayOpacity={overlayOpacity}
-              revealFrontLayers={revealOverviewFrontLayers}
-              showDeferredLayers={showOverviewFrays}
-              onFrontLayerReady={handleFrontLayerReady}
-              onPressSection={onPressSection}
-              onPressStack={onPressStack}
-            />
-          ))}
+          {sections.map((section, sectionIndex) => {
+            const sectionFrame = getSectionFrame(layout, sectionIndex);
+
+            return (
+              <AnimatedSection
+                key={`section-${sectionIndex}`}
+                layout={layout}
+                section={section}
+                sectionIndex={sectionIndex}
+                activeSectionIndex={activeSectionIndex}
+                focusProgress={focusProgress}
+                overlayOpacity={overlayOpacity}
+                revealFrontLayers={revealOverviewFrontLayers}
+                showDeferredLayers={showOverviewFrays}
+                scrollY={scrollY}
+                sectionTop={sectionFrame.top}
+                sectionLeft={sectionFrame.left}
+                onFrontLayerReady={handleFrontLayerReady}
+                onPressSection={onPressSection}
+                onPressStack={onPressStack}
+              />
+            );
+          })}
         </View>
-      </View>
-      <View style={[styles.topRightMenuWrap, { top: insets.top + NAV_TOP_PADDING - overviewShift }]}>
+      </Animated.ScrollView>
+      <View style={[styles.topRightMenuWrap, { top: navTop }]}>
         <Pressable onPress={() => setMenuOpen((current) => !current)} style={styles.hamburger}>
           <Text style={styles.hamburgerText}>{"\u2630"}</Text>
         </Pressable>
@@ -339,7 +371,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   viewport: {
-    overflow: "hidden",
+    alignItems: "center",
   },
   worldSurface: {
     flex: 1,

@@ -33,6 +33,7 @@ type SingleAlbumStackScreenProps = {
   onSaveProject?: (project: StackProject, index: number) => void;
   onRemoveProject?: (project: StackProject, index: number) => void;
   stackWidthOverride?: number;
+  introRotationOffsetDeg?: number;
 };
 
 function normalise(value: number, size: number) {
@@ -102,6 +103,7 @@ export default function SingleAlbumStackScreen({
   onSaveProject,
   onRemoveProject,
   stackWidthOverride,
+  introRotationOffsetDeg = 0,
 }: SingleAlbumStackScreenProps) {
   const N = projects.length;
   const visibleDepth = getVisibleDepth(N);
@@ -428,6 +430,7 @@ export default function SingleAlbumStackScreen({
             );
 
           const messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
+          const introRotateStart = messy.rotate + introRotationOffsetDeg * Math.max(0.42, 1 - index * 0.18);
           const canInteract = !introLocked && absRel < 0.35;
 
           return (
@@ -463,7 +466,7 @@ export default function SingleAlbumStackScreen({
                       {
                         rotate: introProgress.interpolate({
                           inputRange: [0, 1],
-                          outputRange: [`${messy.rotate}deg`, "0deg"],
+                          outputRange: [`${introRotateStart}deg`, "0deg"],
                         }),
                       },
                     ],

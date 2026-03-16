@@ -4,6 +4,7 @@ import Animated, {
   interpolate,
   type SharedValue,
   useAnimatedStyle,
+  useSharedValue,
 } from "react-native-reanimated";
 import type { TrackStack } from "../data/trackStacks";
 import {
@@ -11,7 +12,10 @@ import {
   STACKS_PER_ROW,
   type TrackWorldLayout,
 } from "../lib/trackWorldLayout";
-import TrackStackPreviewOnOverviewScreen from "../components/TrackStackPreviewOnOverviewScreen";
+import TrackStackPreviewOnOverviewScreen, {
+  getPreviewJitter,
+  getPreviewParallaxRotation,
+} from "../components/TrackStackPreviewOnOverviewScreen";
 
 type StackFrame = {
   left: number;
@@ -24,21 +28,24 @@ type Partition16ScreenProps = {
   layout: TrackWorldLayout;
   section: TrackStack[];
   progress: SharedValue<number>;
+  scrollY?: SharedValue<number>;
+  sectionTop?: number;
+  sectionLeft?: number;
   isActive: boolean;
   revealFrontLayers?: boolean;
   showDeferredLayers?: boolean;
   onFrontLayerReady?: (stackId: string) => void;
-  onPressStack: (stackIndex: number) => void;
+  onPressStack: (stackIndex: number, previewRotationDeg?: number) => void;
 };
 
-const FOCUSED_COLUMNS = 2;
-const FOCUSED_ROWS = 2;
+const FOCUSED_COLUMNS = 1;
+const FOCUSED_ROWS = 1;
 const FOCUSED_SECTION_SIDE_PADDING = 8;
 const FOCUSED_SECTION_VERTICAL_PADDING = 16;
 const FOCUSED_SECTION_UPWARD_SHIFT_RATIO = -0.04;
-const FOCUSED_STACK_GAP_X = 28;
-const FOCUSED_STACK_GAP_Y = 56;
-const FOCUSED_SECTION_PADDING = 2;
+const FOCUSED_STACK_GAP_X = 0;
+const FOCUSED_STACK_GAP_Y = 0;
+const FOCUSED_SECTION_PADDING = 0;
 
 function getDefaultStackFrame(layout: TrackWorldLayout, stackIndex: number): StackFrame {
   const row = Math.floor(stackIndex / STACKS_PER_ROW);
@@ -94,6 +101,9 @@ function PartitionStackPreview({
   stack,
   stackIndex,
   progress,
+  scrollY,
+  sectionTop,
+  sectionLeft,
   isActive,
   revealFrontLayers,
   showDeferredLayers,
@@ -104,6 +114,9 @@ function PartitionStackPreview({
   stack: TrackStack;
   stackIndex: number;
   progress: SharedValue<number>;
+  scrollY: SharedValue<number>;
+  sectionTop: number;
+  sectionLeft: number;
   isActive: boolean;
   revealFrontLayers?: boolean;
   showDeferredLayers?: boolean;
@@ -144,6 +157,11 @@ function PartitionStackPreview({
           <TrackStackPreviewOnOverviewScreen
             stack={stack}
             size={baseFrame.width}
+            stackTop={sectionTop + baseFrame.top}
+            stackLeft={sectionLeft + baseFrame.left}
+            viewportWidth={layout.viewportWidth}
+            viewportHeight={layout.viewportHeight}
+            scrollY={scrollY}
             revealFrontLayers={revealFrontLayers}
             showDeferredLayers={showDeferredLayers}
             onFrontLayerReady={onFrontLayerReady}
@@ -158,12 +176,18 @@ export default function Partition16Screen({
   layout,
   section,
   progress,
+  scrollY,
+  sectionTop = 0,
+  sectionLeft = 0,
   isActive,
   revealFrontLayers,
   showDeferredLayers,
   onFrontLayerReady,
   onPressStack,
 }: Partition16ScreenProps) {
+  const fallbackScrollY = useSharedValue(0);
+  const activeScrollY = scrollY ?? fallbackScrollY;
+
   return (
     <>
       {section.map((stack, stackIndex) => (
@@ -173,11 +197,24 @@ export default function Partition16Screen({
           stack={stack}
           stackIndex={stackIndex}
           progress={progress}
+          scrollY={activeScrollY}
+          sectionTop={sectionTop}
+          sectionLeft={sectionLeft}
           isActive={isActive}
           revealFrontLayers={revealFrontLayers}
           showDeferredLayers={showDeferredLayers}
           onFrontLayerReady={onFrontLayerReady}
-          onPress={() => onPressStack(stackIndex)}
+          onPress={() => {
+            const frame = getDefaultStackFrame(layout, stackIndex);
+            const jitter = getPreviewJitter(stack.id, 0, frame.width);
+            const rotation =
+              jitter.rotate +
+              getPreviewParallaxRotation(
+                sectionLeft + frame.left + jitter.x + frame.width / 2,
+                layout.viewportWidth
+              );
+            onPressStack(stackIndex, rotation);
+          }}
         />
       ))}
     </>

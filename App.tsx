@@ -1,17 +1,17 @@
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import ScreenFlowControl from "./services/ScreenFlowControl";
 
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <SafeAreaProvider>
-        <SafeAreaView style={styles.safeArea}>
+        <View style={styles.safeArea}>
           <StatusBar style="dark" />
           <ScreenFlowControl />
-        </SafeAreaView>
+        </View>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

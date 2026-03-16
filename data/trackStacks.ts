@@ -8,7 +8,7 @@ export type TrackStack = {
 
 const STACK_COUNT = 32;
 const TRACKS_PER_STACK = 4;
-const STACKS_PER_SECTION = 4;
+const STACKS_PER_SECTION = 1;
 
 function hslToHex(h: number, s: number, l: number) {
   const saturation = s / 100;

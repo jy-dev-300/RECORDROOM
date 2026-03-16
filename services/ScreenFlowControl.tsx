@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS, useSharedValue } from "react-native-reanimated";
@@ -16,7 +16,6 @@ import {
   NAV_ICON_SIZE,
   NAV_LEFT_INSET,
   NAV_RIGHT_INSET,
-  NAV_TOP_PADDING,
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
 import GiftCreationPage from "../screens/GiftCreationPage";
@@ -32,24 +31,21 @@ type SavedTrackDictionary = {
   track_artwork: string;
 };
 
-const PARTITION_EDGE_BACK_ZONE = 14;
-
 export default function ScreenFlowControl() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedStackIndex, setSelectedStackIndex] = useState<number | null>(null);
+  const [selectedStackIntroRotation, setSelectedStackIntroRotation] = useState(0);
   const [shouldAnimateDetailIntro, setShouldAnimateDetailIntro] = useState(false);
   const [returningFromPlayOptions, setReturningFromPlayOptions] = useState(false);
   const [playingProject, setPlayingProject] = useState<{ stackIndex: number; projectIndex: number } | null>(null);
   const [giftingStackIndex, setGiftingStackIndex] = useState<number | null>(null);
   const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
-  const [focusedSectionIndex, setFocusedSectionIndex] = useState<number | null>(null);
   const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackDictionary>>({});
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
 
-  const focusedSectionRef = useRef<number | null>(null);
   const backGestureTriggered = useSharedValue(false);
 
   const layout = useMemo(() => buildTrackWorldLayout(width, height), [height, width]);
@@ -150,18 +146,8 @@ export default function ScreenFlowControl() {
     return chunkItems(overviewSourceStackIndexes, STACKS_PER_SECTION);
   }, [activeTrackStacks, allTrackSections, overviewMode, overviewSourceStackIndexes]);
 
-  const overviewShift = layout.viewportHeight * 0.05;
-  const navTop = insets.top + NAV_TOP_PADDING - overviewShift;
-
-  const resetSectionFocus = () => {
-    focusedSectionRef.current = null;
-    setFocusedSectionIndex(null);
-  };
-
-  const focusSection = (sectionIndex: number) => {
-    focusedSectionRef.current = sectionIndex;
-    setFocusedSectionIndex(sectionIndex);
-  };
+  const overviewShift = 0;
+  const navTop = insets.top;
 
   const handleSaveProject = (project: StackProject) => {
     setSavedTracksSet((current) => {
@@ -189,6 +175,7 @@ export default function ScreenFlowControl() {
     if (selectedStackIndex == null) return;
     setMenuOpen(false);
     setSelectedStackIndex(null);
+    setSelectedStackIntroRotation(0);
     setShouldAnimateDetailIntro(false);
     setReturningFromPlayOptions(false);
   };
@@ -218,12 +205,6 @@ export default function ScreenFlowControl() {
       return;
     }
 
-    if (focusedSectionIndex != null) {
-      setMenuOpen(false);
-      resetSectionFocus();
-      return;
-    }
-
     if (overviewMode === "my_tracks") {
       setMenuOpen(false);
       setOverviewMode("all");
@@ -234,10 +215,7 @@ export default function ScreenFlowControl() {
     playingProject != null ||
     giftingStackIndex != null ||
     selectedStackIndex != null ||
-    focusedSectionIndex != null ||
     overviewMode === "my_tracks";
-  const overviewBackEdgeWidth =
-    selectedStackIndex == null && focusedSectionIndex != null ? PARTITION_EDGE_BACK_ZONE : EDGE_BACK_ZONE;
 
   const globalBackGesture = Gesture.Pan()
     .maxPointers(1)
@@ -304,7 +282,6 @@ export default function ScreenFlowControl() {
                     onPress={() => {
                       setMenuOpen(false);
                       setSelectedStackIndex(null);
-                      resetSectionFocus();
                       setOverviewMode("all");
                     }}
                     style={styles.menuItem}
@@ -316,7 +293,6 @@ export default function ScreenFlowControl() {
                     onPress={() => {
                       setMenuOpen(false);
                       setSelectedStackIndex(null);
-                      resetSectionFocus();
                       setOverviewMode("my_tracks");
                     }}
                     style={styles.menuItem}
@@ -335,6 +311,7 @@ export default function ScreenFlowControl() {
             <SingleTrackStackScreen
               projects={activeTrackStacks[selectedStackIndex].projects}
               enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
+              introRotationOffsetDeg={selectedStackIntroRotation}
               onPlayPress={(_, index) => setPlayingProject({ stackIndex: selectedStackIndex, projectIndex: index })}
               onGiftPress={() => setGiftingStackIndex(selectedStackIndex)}
               isProjectSaved={(project) => savedTracksSet[project.id] != null}
@@ -352,37 +329,37 @@ export default function ScreenFlowControl() {
       <TracksOverviewScreen
         layout={layout}
         sections={sections}
-        focusedSectionIndex={focusedSectionIndex}
+        focusedSectionIndex={null}
         previewRevealPrimed={overviewPreviewPrimed}
         isMyTracksView={overviewMode === "my_tracks"}
         onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
-        onPressSection={focusSection}
-        onPressStack={(sectionIndex, stackIndex) => {
-          if (focusedSectionIndex == null || sectionIndex !== focusedSectionIndex) return;
+        onPressSection={(sectionIndex) => {
+          const sourceStackIndex = overviewSourceSections[sectionIndex]?.[0];
+          if (sourceStackIndex == null) return;
+          setShouldAnimateDetailIntro(true);
+          setReturningFromPlayOptions(false);
+          setSelectedStackIntroRotation(0);
+          setSelectedStackIndex(sourceStackIndex);
+        }}
+        onPressStack={(sectionIndex, stackIndex, previewRotationDeg) => {
           const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
           if (sourceStackIndex == null) return;
           setShouldAnimateDetailIntro(true);
           setReturningFromPlayOptions(false);
+          setSelectedStackIntroRotation(previewRotationDeg ?? 0);
           setSelectedStackIndex(sourceStackIndex);
         }}
         onPressMyTracks={() => {
           setMenuOpen(false);
-          resetSectionFocus();
           setOverviewMode("my_tracks");
         }}
         onPressAllTracks={() => {
           setMenuOpen(false);
-          resetSectionFocus();
           setOverviewMode("all");
         }}
       />
-      {focusedSectionIndex != null ? (
-        <Pressable hitSlop={20} onPress={resetSectionFocus} style={[styles.backButton, { top: navTop }]}>
-          <Text style={styles.backArrow}>{"\u2190"}</Text>
-        </Pressable>
-      ) : null}
       <GestureDetector gesture={globalBackGesture}>
-        <View style={[styles.globalBackEdge, { width: overviewBackEdgeWidth }]} />
+        <View style={styles.globalBackEdge} />
       </GestureDetector>
     </View>
   );

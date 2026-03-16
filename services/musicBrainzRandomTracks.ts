@@ -20,6 +20,7 @@ type MusicBrainzArtistCredit = {
 type MusicBrainzReleaseSummary = {
   id: string;
   title?: string;
+  date?: string;
 };
 
 type MusicBrainzRecording = {
@@ -79,8 +80,17 @@ function getArtistId(artistCredits?: MusicBrainzArtistCredit[]) {
   return hashToPositiveInt(firstArtistId);
 }
 
+function getCurrentYear() {
+  return new Date().getFullYear();
+}
+
+function getCurrentYearRelease(recording: MusicBrainzRecording) {
+  const yearPrefix = `${getCurrentYear()}-`;
+  return recording.releases?.find((release) => release.id && release.date?.startsWith(yearPrefix)) ?? null;
+}
+
 function toFeedTrack(recording: MusicBrainzRecording): FeedTrack | null {
-  const release = recording.releases?.[0];
+  const release = getCurrentYearRelease(recording);
   if (!release?.id) {
     return null;
   }
@@ -145,8 +155,19 @@ async function musicBrainzFetch<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+function getCurrentYearDateRange() {
+  const year = new Date().getFullYear();
+  return {
+    start: `${year}-01-01`,
+    end: `${year}-12-31`,
+  };
+}
+
 function buildRecordingQuery() {
-  return encodeURIComponent("primarytype:album AND status:official AND dur:[90000 TO 480000]");
+  const { start, end } = getCurrentYearDateRange();
+  return encodeURIComponent(
+    `primarytype:album AND status:official AND date:[${start} TO ${end}] AND dur:[90000 TO 480000]`
+  );
 }
 
 export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_COUNT): Promise<FeedTrack[]> {

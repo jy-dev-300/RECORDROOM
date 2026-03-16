@@ -1,6 +1,6 @@
 export const SECTIONS_PER_ROW = 2;
-export const STACKS_PER_SECTION = 4;
-export const STACKS_PER_ROW = 2;
+export const STACKS_PER_SECTION = 1;
+export const STACKS_PER_ROW = 1;
 export const MIN_SCALE = 1;
 export const MAX_SCALE_PHONE = 14;
 export const MAX_SCALE_TABLET = 12;
@@ -122,38 +122,37 @@ export function buildAlbumWorldLayout(width: number, height: number): AlbumWorld
   const isTabletLike = width >= 768;
   const viewportWidth = width;
   const viewportHeight = height;
-  const sectionGapX = isTabletLike ? 26 : 16;
-  const sectionGapY = isTabletLike ? 104 : 72;
   const internalRowGapY = isTabletLike ? 10 : 8;
-  const sectionInnerPadding = isTabletLike ? 10 : 6;
+  const sectionGapY = internalRowGapY;
+  const sectionInnerPadding = 0;
   const stackGapX = isTabletLike ? 7 : 5;
+  const baseSectionGapX = stackGapX / 2;
+  const sectionGapX = baseSectionGapX - 30;
 
-  const sectionWidth = (viewportWidth - sectionGapX) / 2;
+  const sectionWidth = (viewportWidth - baseSectionGapX) / 2;
   const usableSectionWidth = sectionWidth - sectionInnerPadding * 2;
-  const minPreview = isTabletLike ? 18 : 10;
-  const maxPreview = isTabletLike ? 36 : 18;
+  const minPreview = isTabletLike ? 144 : 80;
+  const maxPreview = isTabletLike ? 288 : 144;
   let previewSize = clamp(
     Math.floor((usableSectionWidth - stackGapX * (STACKS_PER_ROW - 1)) / STACKS_PER_ROW),
     minPreview,
     maxPreview
   );
 
-  const baseMaxSectionHeight = (viewportHeight - (isTabletLike ? 30 : 20) * 3) / 4;
-  const maxRowHeight = (baseMaxSectionHeight - sectionInnerPadding * 2 - internalRowGapY) / 2;
+  const maxRowHeight = viewportHeight * 0.42;
   while (previewSize > minPreview && getPreviewPressableHeight(previewSize) > maxRowHeight) {
     previewSize -= 1;
   }
 
   const rowHeight = getPreviewPressableHeight(previewSize);
-  const sectionHeight = sectionInnerPadding * 2 + rowHeight * 2 + internalRowGapY;
+  const sectionHeight = sectionInnerPadding * 2 + rowHeight;
   const megaBlockWidth = sectionWidth * 2 + sectionGapX;
-  const megaBlockHeight = sectionHeight * 4 + sectionGapY * 3;
+  const megaBlockHeight = sectionHeight * 16 + sectionGapY * 15;
 
   const worldWidth = Math.max(viewportWidth, megaBlockWidth);
   const worldHeight = Math.max(viewportHeight, megaBlockHeight);
   const megaBlockLeft = (worldWidth - megaBlockWidth) / 2;
-  const centeredTop = (worldHeight - megaBlockHeight) / 2;
-  const megaBlockTop = centeredTop - viewportHeight * OVERVIEW_VERTICAL_SHIFT_RATIO;
+  const megaBlockTop = 0;
 
   const detailStackWidth = clamp(width * 0.88, 280, 420);
   const resolveEndScale = clamp(detailStackWidth / Math.max(1, previewSize), 2.4, 24);
