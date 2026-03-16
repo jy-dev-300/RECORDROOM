@@ -8,6 +8,7 @@ const TARGET_TRACK_COUNT = 128;
 const MAX_OFFSET_STEPS = 8;
 const MAX_ARTIST_TRACKS = 2;
 const COVER_ART_SIZE = 250;
+const COVER_ART_ARCHIVE_BASE = "https://coverartarchive.org";
 
 type MusicBrainzArtistCredit = {
   name?: string;
@@ -59,7 +60,7 @@ function hashToPositiveInt(value: string) {
 }
 
 function buildCoverArtUrl(releaseId: string) {
-  return `https://coverartarchive.org/release/${releaseId}/front-${COVER_ART_SIZE}`;
+  return `${COVER_ART_ARCHIVE_BASE}/release/${releaseId}/front-${COVER_ART_SIZE}`;
 }
 
 function getArtistName(artistCredits?: MusicBrainzArtistCredit[]) {
@@ -185,16 +186,16 @@ function getCurrentYearDateRange() {
 function buildRecordingQuery() {
   const { start, end } = getCurrentYearDateRange();
   return encodeURIComponent(
-    `primarytype:album AND status:official AND date:[${start} TO ${end}] AND dur:[90000 TO 480000]`
+    `(primarytype:album OR primarytype:single OR primarytype:ep) AND status:official AND date:[${start} TO ${end}] AND dur:[90000 TO 480000]`
   );
 }
 
 export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_COUNT): Promise<FeedTrack[]> {
-  const seenTrackIds = new Set<number>();
-  const seenReleaseIds = new Set<string>();
-  const seenTrackSignatures = new Set<string>();
-  const seenAlbumSignatures = new Set<string>();
-  const seenArtworkUrls = new Set<string>();
+  // const seenTrackIds = new Set<number>();
+  // const seenReleaseIds = new Set<string>();
+  // const seenTrackSignatures = new Set<string>();
+  // const seenAlbumSignatures = new Set<string>();
+  // const seenArtworkUrls = new Set<string>();
   const perArtistCounts = new Map<number, number>();
   const collected: FeedTrack[] = [];
 
@@ -210,18 +211,18 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
     for (const recording of recordings) {
       const release = getCurrentYearRelease(recording);
       if (!release?.id) continue;
-      if (seenReleaseIds.has(release.id)) continue;
+      // if (seenReleaseIds.has(release.id)) continue;
 
       const signature = getTrackSignature(recording);
-      if (signature && seenTrackSignatures.has(signature)) continue;
+      // if (signature && seenTrackSignatures.has(signature)) continue;
 
       const albumSignature = getAlbumSignature(recording, release);
-      if (albumSignature && seenAlbumSignatures.has(albumSignature)) continue;
+      // if (albumSignature && seenAlbumSignatures.has(albumSignature)) continue;
 
       const track = toFeedTrack(recording);
       if (!track) continue;
-      if (seenTrackIds.has(track.id)) continue;
-      if (track.artwork_url && seenArtworkUrls.has(track.artwork_url)) continue;
+      // if (seenTrackIds.has(track.id)) continue;
+      // if (track.artwork_url && seenArtworkUrls.has(track.artwork_url)) continue;
 
       const artistId = track.user?.id;
       if (artistId != null) {
@@ -230,17 +231,17 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
         perArtistCounts.set(artistId, artistCount + 1);
       }
 
-      seenTrackIds.add(track.id);
-      seenReleaseIds.add(release.id);
-      if (signature) {
-        seenTrackSignatures.add(signature);
-      }
-      if (albumSignature) {
-        seenAlbumSignatures.add(albumSignature);
-      }
-      if (track.artwork_url) {
-        seenArtworkUrls.add(track.artwork_url);
-      }
+      // seenTrackIds.add(track.id);
+      // seenReleaseIds.add(release.id);
+      // if (signature) {
+      //   seenTrackSignatures.add(signature);
+      // }
+      // if (albumSignature) {
+      //   seenAlbumSignatures.add(albumSignature);
+      // }
+      // if (track.artwork_url) {
+      //   seenArtworkUrls.add(track.artwork_url);
+      // }
       collected.push(track);
 
       if (collected.length >= targetCount) {

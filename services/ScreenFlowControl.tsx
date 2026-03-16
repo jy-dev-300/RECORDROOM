@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { createTrackStackSections, createTrackStacksFromTracks, trackStacks } from "../data/trackStacks";
+import { createTrackStackSections, createTrackStacksFromTracks } from "../data/trackStacks";
 import {
   buildTrackWorldLayout,
   chunkItems,
@@ -23,6 +23,7 @@ import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleTrackStackScreen, { type StackProject } from "../screens/SingleTrackStackScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
 import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./musicBrainzTrackFetchService";
+import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOverviewScreen";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type OverviewMode = "all" | "my_tracks";
@@ -31,12 +32,34 @@ type SavedTrackDictionary = {
   track_artwork: string;
 };
 
+async function prefetchStackAssets(projects: StackProject[]) {
+  await Promise.allSettled(
+    projects.map(async (project) => {
+      if (project.type !== "image" || !project.media.trim()) {
+        return;
+      }
+
+      await Image.prefetch(project.media);
+    })
+  );
+}
+
+async function warmTrackSet(tracks: FeedTrack[]) {
+  const stacks = createTrackStacksFromTracks(tracks);
+  await Promise.allSettled(stacks.map((stack) => prefetchStackAssets(stack.projects)));
+}
+
+function warmTrackSetInBackground(tracks: FeedTrack[]) {
+  void warmTrackSet(tracks);
+}
+
 export default function ScreenFlowControl() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedStackIndex, setSelectedStackIndex] = useState<number | null>(null);
   const [selectedStackIntroRotation, setSelectedStackIntroRotation] = useState(0);
+  const [selectedStackIntroSnapshots, setSelectedStackIntroSnapshots] = useState<PreviewLayerSnapshot[] | null>(null);
   const [shouldAnimateDetailIntro, setShouldAnimateDetailIntro] = useState(false);
   const [returningFromPlayOptions, setReturningFromPlayOptions] = useState(false);
   const [playingProject, setPlayingProject] = useState<{ stackIndex: number; projectIndex: number } | null>(null);
@@ -45,46 +68,82 @@ export default function ScreenFlowControl() {
   const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackDictionary>>({});
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
+  const [feedReady, setFeedReady] = useState(false);
+  const [overviewScrollOffset, setOverviewScrollOffset] = useState(0);
 
   const backGestureTriggered = useSharedValue(false);
 
   const layout = useMemo(() => buildTrackWorldLayout(width, height), [height, width]);
-  const activeTrackStacks = useMemo(
-    () => (feedTracks.length > 0 ? createTrackStacksFromTracks(feedTracks) : trackStacks),
+  const activeTrackStacks = useMemo(() => createTrackStacksFromTracks(feedTracks), [feedTracks]);
+  const allTrackSections = useMemo(
+    () => createTrackStackSections(feedTracks),
     [feedTracks]
   );
-  const allTrackSections = useMemo(
-    () =>
-      feedTracks.length > 0
-        ? createTrackStackSections(feedTracks)
-        : chunkItems(activeTrackStacks, STACKS_PER_SECTION),
-    [activeTrackStacks, feedTracks]
-  );
+
+  const refreshFeed = async (options?: { preferCache?: boolean; preserveVisibleFeed?: boolean }) => {
+    const preserveVisibleFeed = options?.preserveVisibleFeed === true;
+    const previousTracks = feedTracks;
+
+    if (!preserveVisibleFeed) {
+      setFeedReady(false);
+    }
+
+    if (options?.preferCache !== false) {
+      try {
+        const cached = await loadCachedRandomTracks();
+        if (cached && cached.tracks.length > 0) {
+          setFeedTracks(cached.tracks);
+          setFeedReady(true);
+          warmTrackSetInBackground(cached.tracks);
+          return;
+        }
+      } catch {
+        // Ignore cache read failures and continue to fresh fetch.
+      }
+    }
+
+    try {
+      const result = await fetchRandomTracks();
+      if (result.tracks.length === 0) {
+        if (previousTracks.length > 0) {
+          setFeedTracks(previousTracks);
+        }
+        setFeedReady(true);
+        return;
+      }
+
+      setFeedTracks(result.tracks);
+      setOverviewScrollOffset(0);
+      setFeedReady(true);
+      warmTrackSetInBackground(result.tracks);
+      void cacheRandomTracks(result);
+    } catch (error) {
+      console.warn("MusicBrainz track fetch failed; no track stacks available.", error);
+      if (previousTracks.length > 0) {
+        setFeedTracks(previousTracks);
+      } else {
+        setFeedTracks([]);
+      }
+      setFeedReady(true);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
 
-    loadCachedRandomTracks()
-      .then((cached) => {
-        if (!cancelled && cached) {
-          setFeedTracks(cached.tracks);
+    const bootFeed = async () => {
+      try {
+        if (cancelled) return;
+        await refreshFeed({ preferCache: true });
+      } catch {
+        if (!cancelled) {
+          setFeedTracks([]);
+          setFeedReady(true);
         }
-      })
-      .catch(() => {
-        // Ignore cache read failures and continue to network.
-      })
-      .finally(() => {
-        fetchRandomTracks()
-          .then((result) => {
-            if (!cancelled) {
-              setFeedTracks(result.tracks);
-            }
-            void cacheRandomTracks(result);
-          })
-          .catch((error) => {
-            console.warn("MusicBrainz track fetch failed; using fallback track stacks.", error);
-          });
-      });
+      }
+    };
+
+    void bootFeed();
 
     return () => {
       cancelled = true;
@@ -148,6 +207,9 @@ export default function ScreenFlowControl() {
 
   const overviewShift = 0;
   const navTop = insets.top;
+  const selectedStack = selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null;
+  const giftingStack = giftingStackIndex != null ? activeTrackStacks[giftingStackIndex] ?? null : null;
+  const playingStack = playingProject != null ? activeTrackStacks[playingProject.stackIndex] ?? null : null;
 
   const handleSaveProject = (project: StackProject) => {
     setSavedTracksSet((current) => {
@@ -176,6 +238,7 @@ export default function ScreenFlowControl() {
     setMenuOpen(false);
     setSelectedStackIndex(null);
     setSelectedStackIntroRotation(0);
+    setSelectedStackIntroSnapshots(null);
     setShouldAnimateDetailIntro(false);
     setReturningFromPlayOptions(false);
   };
@@ -239,7 +302,7 @@ export default function ScreenFlowControl() {
     });
 
   if (playingProject != null) {
-    const projects = activeTrackStacks[playingProject.stackIndex]?.projects ?? [];
+    const projects = playingStack?.projects ?? [];
     return (
       <View style={styles.pageRoot}>
         <PlayOptionsScreen
@@ -256,6 +319,10 @@ export default function ScreenFlowControl() {
   }
 
   if (selectedStackIndex != null) {
+    if (!selectedStack) {
+      return <View style={styles.pageRoot} />;
+    }
+
     return (
       <View style={styles.detailPage}>
         <View pointerEvents="box-none" style={styles.detailNavLayer}>
@@ -306,12 +373,13 @@ export default function ScreenFlowControl() {
         </View>
         <View style={styles.detailCanvas}>
           {giftingStackIndex != null ? (
-            <GiftCreationPage projects={activeTrackStacks[giftingStackIndex]?.projects ?? []} />
+            <GiftCreationPage projects={giftingStack?.projects ?? []} />
           ) : (
             <SingleTrackStackScreen
-              projects={activeTrackStacks[selectedStackIndex].projects}
+              projects={selectedStack.projects}
               enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
               introRotationOffsetDeg={selectedStackIntroRotation}
+              introLayerSnapshots={selectedStackIntroSnapshots ?? undefined}
               onPlayPress={(_, index) => setPlayingProject({ stackIndex: selectedStackIndex, projectIndex: index })}
               onGiftPress={() => setGiftingStackIndex(selectedStackIndex)}
               isProjectSaved={(project) => savedTracksSet[project.id] != null}
@@ -324,6 +392,10 @@ export default function ScreenFlowControl() {
     );
   }
 
+  if (!feedReady) {
+    return <View style={styles.pageRoot} />;
+  }
+
   return (
     <View style={styles.pageRoot}>
       <TracksOverviewScreen
@@ -331,13 +403,20 @@ export default function ScreenFlowControl() {
         sections={sections}
         previewRevealPrimed={overviewPreviewPrimed}
         isMyTracksView={overviewMode === "my_tracks"}
+        initialScrollOffset={overviewScrollOffset}
         onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
-        onPressStack={(sectionIndex, stackIndex, previewRotationDeg) => {
+        onPressRefresh={() => {
+          void refreshFeed({ preferCache: false, preserveVisibleFeed: true });
+        }}
+        onScrollOffsetChange={setOverviewScrollOffset}
+        onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
           const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
           if (sourceStackIndex == null) return;
+          await prefetchStackAssets(activeTrackStacks[sourceStackIndex]?.projects ?? []);
           setShouldAnimateDetailIntro(true);
           setReturningFromPlayOptions(false);
           setSelectedStackIntroRotation(previewRotationDeg ?? 0);
+          setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
           setSelectedStackIndex(sourceStackIndex);
         }}
         onPressMyTracks={() => {

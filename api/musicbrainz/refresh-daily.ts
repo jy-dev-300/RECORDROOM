@@ -1,14 +1,9 @@
-import { fetchRandomAlbumsByCountry } from "../../services/musicBrainzRandomAlbums";
-// Redis/KV-backed refresh is intentionally bypassed for local testing.
-// Keep these imports commented for easy restoration later.
-/*
 import {
-  acquireDailyAlbumsRefreshLock,
-  getStoredDailyAlbums,
-  releaseDailyAlbumsRefreshLock,
-  setStoredDailyAlbums,
-} from "../../services/dailyAlbumsStore";
-*/
+  acquireDailyTracksRefreshLock,
+  releaseDailyTracksRefreshLock,
+  setStoredDailyTracks,
+} from "../../services/dailyTracksStore";
+import { fetchRandomMusicBrainzTracks } from "../../services/musicBrainzRandomTracks";
 
 type RequestLike = {
   method?: string;
@@ -50,15 +45,29 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const fresh = await fetchRandomAlbumsByCountry();
+    const hasLock = await acquireDailyTracksRefreshLock();
+    if (!hasLock) {
+      res.status(409).json({ error: "Track refresh already in progress" });
+      return;
+    }
+
+    let freshCount = 0;
+    try {
+      const tracks = await fetchRandomMusicBrainzTracks();
+      freshCount = tracks.length;
+      await setStoredDailyTracks({
+        tracks,
+        generatedAt: new Date().toISOString(),
+      });
+    } finally {
+      await releaseDailyTracksRefreshLock();
+    }
 
     res.status(200).json({
       ok: true,
       refreshed: true,
-      bypassedStorage: true,
       generatedAt: new Date().toISOString(),
-      albumCount: fresh.allAlbums.length,
-      countryCount: fresh.countrySections.length,
+      trackCount: freshCount,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown MusicBrainz refresh failure";

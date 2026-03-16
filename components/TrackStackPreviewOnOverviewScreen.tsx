@@ -78,6 +78,99 @@ function getDirectionalParallaxResponse(stackId: string, layerIndex: number, axi
   };
 }
 
+export type PreviewLayerSnapshot = {
+  translateX: number;
+  translateY: number;
+  rotateDeg: number;
+};
+
+type PreviewLayerSnapshotInput = {
+  stackId: string;
+  layerIndex: number;
+  size: number;
+  stackTop: number;
+  stackLeft: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  scrollY: number;
+};
+
+export function getPreviewLayerSnapshot({
+  stackId,
+  layerIndex,
+  size,
+  stackTop,
+  stackLeft,
+  viewportWidth,
+  viewportHeight,
+  scrollY,
+}: PreviewLayerSnapshotInput): PreviewLayerSnapshot {
+  const baseTranslateY = -getPreviewStackOffset(size, layerIndex);
+  const jitter = getPreviewJitter(stackId, layerIndex, size);
+  const layerParallaxVariance = getLayerParallaxVariance(stackId, layerIndex);
+  const layerParallaxXBias = getLayerParallaxXBias(stackId, layerIndex);
+  const layerRotationBias = getLayerParallaxRotationBias(stackId, layerIndex);
+  const xDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "x");
+  const yDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "y");
+  const rotationDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "rotate");
+  const stackParallaxVariance = getStackParallaxVariance(stackId);
+  const stackParallaxXBias = getStackParallaxXBias(stackId);
+  const cardCenterY = stackTop + baseTranslateY + jitter.y + size / 2 - scrollY;
+  const cardCenterX = stackLeft + jitter.x + size / 2;
+  const viewportCenterY = viewportHeight / 2;
+  const viewportCenterX = viewportWidth / 2;
+  const distanceFromCenter = cardCenterY - viewportCenterY;
+  const horizontalDistance = cardCenterX - viewportCenterX;
+  const normalizedDistance = distanceFromCenter / Math.max(1, viewportHeight / 2);
+  const normalizedHorizontalDistance = horizontalDistance / Math.max(1, viewportWidth / 2);
+  const depthFactor = Math.max(0.4, 1 - layerIndex * 0.18);
+  const columnFactor = 1 + normalizedHorizontalDistance * 0.32;
+  const xDirectionFactor = normalizedDistance < 0 ? xDirectionalResponse.negative : xDirectionalResponse.positive;
+  const yDirectionFactor = normalizedDistance < 0 ? yDirectionalResponse.negative : yDirectionalResponse.positive;
+  const rotationDirectionFactor =
+    normalizedDistance < 0 ? rotationDirectionalResponse.negative : rotationDirectionalResponse.positive;
+  const xBias = stackParallaxXBias + layerParallaxXBias;
+  const parallaxX = Math.max(
+    -PARALLAX_MAX_SHIFT_X,
+    Math.min(
+      PARALLAX_MAX_SHIFT_X,
+      normalizedDistance
+        * PARALLAX_MAX_SHIFT_X
+        * depthFactor
+        * stackParallaxVariance
+        * layerParallaxVariance
+        * xBias
+        * xDirectionFactor
+    )
+  );
+  const parallaxY = Math.max(
+    -PARALLAX_MAX_SHIFT,
+    Math.min(
+      PARALLAX_MAX_SHIFT,
+      normalizedDistance
+        * PARALLAX_MAX_SHIFT
+        * depthFactor
+        * columnFactor
+        * stackParallaxVariance
+        * layerParallaxVariance
+        * yDirectionFactor
+    )
+  );
+  const parallaxRotate = Math.max(
+    -PARALLAX_MAX_ROTATION,
+    Math.min(
+      PARALLAX_MAX_ROTATION,
+      normalizedHorizontalDistance * PARALLAX_MAX_ROTATION * rotationDirectionFactor + layerRotationBias
+    )
+  );
+
+  return {
+    translateX: jitter.x + parallaxX,
+    translateY: baseTranslateY + jitter.y + parallaxY,
+    rotateDeg: jitter.rotate + parallaxRotate,
+  };
+}
+
 type TrackStackPreviewOnOverviewScreenProps = {
   stack: TrackStack;
   size: number;

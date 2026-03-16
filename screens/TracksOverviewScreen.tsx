@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
+  runOnJS,
   type SharedValue,
   useAnimatedScrollHandler,
   useSharedValue,
@@ -21,7 +22,9 @@ import {
 } from "../lib/navigationChrome";
 import TrackStackPreviewOnOverviewScreen, {
   getPreviewJitter,
+  getPreviewLayerSnapshot,
   getPreviewParallaxRotation,
+  type PreviewLayerSnapshot,
 } from "../components/TrackStackPreviewOnOverviewScreen";
 
 type TracksOverviewScreenProps = {
@@ -31,8 +34,16 @@ type TracksOverviewScreenProps = {
   isMyTracksView?: boolean;
   onPressMyTracks?: () => void;
   onPressAllTracks?: () => void;
+  onPressRefresh?: () => void;
   onPreviewRevealPrimed?: () => void;
-  onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
+  initialScrollOffset?: number;
+  onScrollOffsetChange?: (offset: number) => void;
+  onPressStack: (
+    sectionIndex: number,
+    stackIndex: number,
+    previewRotationDeg?: number,
+    previewLayerSnapshots?: PreviewLayerSnapshot[]
+  ) => void;
 };
 
 type SectionFrame = {
@@ -61,7 +72,12 @@ type OverviewStackProps = {
   showDeferredLayers: boolean;
   scrollY: SharedValue<number>;
   onFrontLayerReady: (stackId: string) => void;
-  onPressStack: (sectionIndex: number, stackIndex: number, previewRotationDeg?: number) => void;
+  onPressStack: (
+    sectionIndex: number,
+    stackIndex: number,
+    previewRotationDeg?: number,
+    previewLayerSnapshots?: PreviewLayerSnapshot[]
+  ) => void;
 };
 
 function OverviewStack({
@@ -101,7 +117,22 @@ function OverviewStack({
     >
       <Pressable
         hitSlop={12}
-        onPress={() => onPressStack(sectionIndex, 0, previewRotation)}
+        onPress={() => {
+          const previewLayerSnapshots = stack.projects.slice(0, 4).map((_, layerIndex) =>
+            getPreviewLayerSnapshot({
+              stackId: stack.id,
+              layerIndex,
+              size: previewSize,
+              stackTop: previewTop,
+              stackLeft: previewLeft,
+              viewportWidth: layout.viewportWidth,
+              viewportHeight: layout.viewportHeight,
+              scrollY: scrollY.value,
+            })
+          );
+
+          onPressStack(sectionIndex, 0, previewRotation, previewLayerSnapshots);
+        }}
         style={[
           styles.stackPressable,
           {
@@ -134,10 +165,16 @@ export default function TracksOverviewScreen({
   isMyTracksView = false,
   onPressMyTracks,
   onPressAllTracks,
+  onPressRefresh,
   onPreviewRevealPrimed,
+  initialScrollOffset = 0,
+  onScrollOffsetChange,
   onPressStack,
 }: TracksOverviewScreenProps) {
   const insets = useSafeAreaInsets();
+  const scrollViewRef = useRef<Animated.ScrollView>(null);
+  const hasRestoredScrollRef = useRef(false);
+  const onPreviewRevealPrimedRef = useRef(onPreviewRevealPrimed);
   const [menuOpen, setMenuOpen] = useState(false);
   const [readyFrontLayerIds, setReadyFrontLayerIds] = useState<Record<string, true>>({});
   const [revealOverviewFrontLayers, setRevealOverviewFrontLayers] = useState(previewRevealPrimed);
@@ -146,10 +183,29 @@ export default function TracksOverviewScreen({
   const navTop = insets.top + NAV_TOP_PADDING + 24;
   const GRID_TOP_OFFSET = 36;
   const gridOffset = navTop - layout.megaBlockTop + GRID_TOP_OFFSET;
+  const gridEdgeWhitespace = Math.max(0, gridOffset);
+  const gridBottomWhitespace = gridEdgeWhitespace + 68;
+  const renderedRowCount = Math.max(1, Math.ceil(sections.length / SECTIONS_PER_ROW));
+  const contentWorldHeight =
+    layout.sectionHeight * renderedRowCount + layout.sectionGapY * Math.max(0, renderedRowCount - 1);
   const totalStackCount = useMemo(
     () => sections.reduce((count, section) => count + section.length, 0),
     [sections]
   );
+
+  useEffect(() => {
+    onPreviewRevealPrimedRef.current = onPreviewRevealPrimed;
+  }, [onPreviewRevealPrimed]);
+
+  useEffect(() => {
+    if (hasRestoredScrollRef.current) {
+      return;
+    }
+
+    scrollY.value = initialScrollOffset;
+    scrollViewRef.current?.scrollTo({ x: 0, y: initialScrollOffset, animated: false });
+    hasRestoredScrollRef.current = true;
+  }, [initialScrollOffset, scrollY]);
 
   useEffect(() => {
     setReadyFrontLayerIds({});
@@ -205,9 +261,9 @@ export default function TracksOverviewScreen({
 
   useEffect(() => {
     if (showOverviewFrays) {
-      onPreviewRevealPrimed?.();
+      onPreviewRevealPrimedRef.current?.();
     }
-  }, [onPreviewRevealPrimed, showOverviewFrays]);
+  }, [showOverviewFrays]);
 
   const handleFrontLayerReady = (stackId: string) => {
     setReadyFrontLayerIds((current) => {
@@ -220,6 +276,9 @@ export default function TracksOverviewScreen({
   const handleScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
+      if (onScrollOffsetChange) {
+        runOnJS(onScrollOffsetChange)(event.contentOffset.y);
+      }
     },
   });
 
@@ -227,12 +286,13 @@ export default function TracksOverviewScreen({
     <View style={styles.root}>
       <Animated.ScrollView
         bounces
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.viewport,
           {
             width: layout.viewportWidth,
             minHeight: layout.viewportHeight,
-            paddingBottom: 140,
+            paddingBottom: gridBottomWhitespace,
             transform: [{ translateY: gridOffset }],
           },
         ]}
@@ -240,7 +300,15 @@ export default function TracksOverviewScreen({
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.worldSurface, { width: layout.worldWidth, height: layout.worldHeight }]}>
+        <View
+          style={[
+            styles.worldSurface,
+            {
+              width: layout.worldWidth,
+              height: Math.max(layout.viewportHeight, contentWorldHeight),
+            },
+          ]}
+        >
           {sections.map((section, sectionIndex) => {
             const stack = section[0];
             if (!stack) return null;
@@ -267,6 +335,15 @@ export default function TracksOverviewScreen({
         </Pressable>
         {menuOpen ? (
           <View style={styles.menuSheet}>
+            <Pressable
+              onPress={() => {
+                setMenuOpen(false);
+                onPressRefresh?.();
+              }}
+              style={styles.menuItem}
+            >
+              <Text style={styles.menuItemText}>Fresh Request</Text>
+            </Pressable>
             {isMyTracksView ? (
               <Pressable
                 onPress={() => {

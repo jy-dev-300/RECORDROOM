@@ -19,17 +19,36 @@ async function ensureCacheDirectories() {
   await FileSystem.makeDirectoryAsync(IMAGE_CACHE_DIR, { intermediates: true });
 }
 
+export async function clearTrackCache() {
+  try {
+    await FileSystem.deleteAsync(CACHE_ROOT, { idempotent: true });
+  } catch {
+    // Ignore cache clear failures and allow the app to continue.
+  }
+}
+
 function getCachedImagePath(trackId: number) {
   return `${IMAGE_CACHE_DIR}${sanitizeFileName(String(trackId))}.jpg`;
 }
 
-function withCachedTrackArtwork(payload: CachedTracksPayload): CachedTracksPayload {
-  return {
-    tracks: payload.tracks.map((track) => ({
-      ...track,
-      artwork_url: track.artwork_url ? getCachedImagePath(track.id) : null,
-    })),
-  };
+async function withCachedTrackArtwork(payload: CachedTracksPayload): Promise<CachedTracksPayload> {
+  const tracks = await Promise.all(
+    payload.tracks.map(async (track) => {
+      if (!track.artwork_url) {
+        return track;
+      }
+
+      const cachedPath = getCachedImagePath(track.id);
+      const cachedExists = await fileExists(cachedPath);
+
+      return {
+        ...track,
+        artwork_url: cachedExists ? cachedPath : track.artwork_url,
+      };
+    })
+  );
+
+  return { tracks };
 }
 
 async function fileExists(uri: string) {
@@ -46,7 +65,7 @@ export async function loadCachedDailyTracks() {
 
     const raw = await FileSystem.readAsStringAsync(PAYLOAD_PATH);
     const payload = JSON.parse(raw) as CachedTracksPayload;
-    return withCachedTrackArtwork(payload);
+    return await withCachedTrackArtwork(payload);
   } catch {
     return null;
   }

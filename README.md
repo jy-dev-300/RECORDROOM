@@ -1,117 +1,224 @@
 # RECORDROOM
 
-## Vercel Setup
+## Current Feed Setup
 
-This project now uses Vercel as a lightweight backend for SoundCloud track discovery and daily refreshes.
+The active app flow now expects a Vercel-backed MusicBrainz track feed that is prepared ahead of time and stored in KV.
 
-### Purpose
+Main files:
 
-- The Expo app does not call SoundCloud discovery endpoints directly.
-- It calls a Vercel serverless route that returns a curated discovery feed.
-- The backend fetches a large candidate pool of public SoundCloud tracks.
-- It filters obvious junk, scores survivors, preserves randomness, and returns up to 128 tracks.
-- The overview UI renders 32 stacks with 4 tracks each in the same partitioned layout.
+- [services/musicBrainzRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzRandomTracks.ts)
+- [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts)
+- [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts)
+- [services/dailyTracksStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyTracksStore.ts)
+- [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
+- [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
+- [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
+- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx)
+- [api/musicbrainz/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-tracks.ts)
+- [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
 
 ## Environment
 
-### Expo local env
+Vercel should provide the backend feed. Set these in your project and local env:
 
 Set in [`.env.local`](/c:/Users/jsy30/Desktop/RECORDROOM/.env.local):
 
 ```env
-EXPO_PUBLIC_API_BASE_URL=https://your-vercel-project-url.vercel.app
-EXPO_PUBLIC_SOUNDCLOUD_CLIENT_ID=your_soundcloud_client_id
+EXPO_PUBLIC_API_BASE_URL=https://your-project.vercel.app
+CRON_SECRET=your_cron_secret
+KV_REST_API_URL=https://your-upstash-endpoint
+KV_REST_API_TOKEN=your-upstash-token
 ```
 
-Notes:
-- `EXPO_PUBLIC_API_BASE_URL` is required for the app to reach the Vercel backend.
-- `EXPO_PUBLIC_SOUNDCLOUD_CLIENT_ID` can be used locally, but the backend should also have a server-side SoundCloud client ID configured.
+Behavior:
 
-### Vercel env
+- the app fetches tracks from `/api/musicbrainz/random-tracks`
+- Vercel cron hits `/api/musicbrainz/refresh-daily`
+- the prepared daily payload is stored in KV
+- if the random-tracks route sees an empty KV cache, it bootstraps once and stores the result
 
-Configure these in Vercel:
+## Caching Logic
 
-- `SOUNDCLOUD_CLIENT_ID`
-- `CRON_SECRET` for protected cron execution, if desired
-
-The active backend no longer depends on Spotify, MusicBrainz, or Redis for the discovery feed.
-
-## Vercel Routes
-
-User-facing serverless route:
-
-- [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts)
-
-Route URL:
-
-```txt
-/api/soundcloud/random-tracks
-```
-
-What it returns:
-
-- `tracks`
-- `generatedAt`
-
-Daily refresh route:
-
-- [api/soundcloud/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/refresh-daily.ts)
-
-Cron config:
-
-- [vercel.json](/c:/Users/jsy30/Desktop/RECORDROOM/vercel.json)
-
-## Backend Services
-
-### App-facing fetch service
-
-- [services/soundCloudFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudFetchService.ts)
-
-Used by the Expo app to call the Vercel route and cache track artwork on-device.
-
-### Server-side SoundCloud discovery logic
-
-- [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts)
-
-Responsibilities:
-
-- fetch 400 to 800 public SoundCloud candidates per batch
-- reject non-streamable, artless, too-short, too-long, and obviously low-signal tracks
-- reject common spam patterns from title and tags
-- score tracks using likes, plays, comments, reposts, followers, metadata richness, and duration
-- keep only tracks with score `>= 8`
-- shuffle survivors before applying a max of 2 tracks per creator
-- return up to 128 `FeedTrack` items
-
-## Device Caching
-
-Track payloads and artwork are cached on-device through:
+All track payload and artwork caching lives in:
 
 - [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts)
+- [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts)
+- [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
+- [services/dailyTracksStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyTracksStore.ts)
 
-This cache:
+### What Is Cached
 
-- stores the last fetched feed payload locally
-- prefetches artwork for the first part of the feed
-- rewrites cached artwork paths when available
+- the last accepted track payload is stored as `daily-tracks.json`
+- artwork files are stored under the track artwork cache directory
+- cached artwork paths are only used if the local file actually exists
 
-## Data Flow
+### Boot Behavior
 
-1. Expo app starts.
-2. [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx) loads cached tracks if available.
-3. The app requests [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts).
-4. [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts) builds the filtered random feed.
-5. [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts) converts the 128-track feed into 32 stacks of 4 tracks.
-6. [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx) renders the partitioned overview.
+On app boot:
 
-## Important Files
+1. [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx) tries `loadCachedRandomTracks()`
+2. if cached tracks exist, that cached track set is warmed and committed as the active session feed
+3. if no cached tracks exist, the app runs `fetchRandomTracks()`
+4. `fetchRandomTracks()` calls the Vercel `random-tracks` route
+5. that route reads the prepared payload from KV, or bootstraps it once if missing
 
-- [api/soundcloud/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/random-tracks.ts)
-- [api/soundcloud/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/soundcloud/refresh-daily.ts)
-- [services/soundCloudFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudFetchService.ts)
-- [services/soundCloudRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/soundCloudRandomTracks.ts)
+Important:
+
+- the app now commits one feed source for the session instead of visibly swapping from one stack list to another after a second request
+- normal navigation does not trigger a new feed request
+
+### When A Fresh Request Happens
+
+A fresh request happens when `fetchRandomTracks()` is called.
+
+Right now that can happen through:
+
+- first boot with no usable cached payload
+- the debug `Fresh Request` button under the overview hamburger menu
+- Vercel cron hitting `/api/musicbrainz/refresh-daily`
+
+### What Happens When `fetchRandomTracks()` Runs
+
+In [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts):
+
+- `clearTrackCache()` runs immediately at the start of `fetchRandomTracks()`
+- that wipes the cached payload and cached artwork directory
+- then a fresh track feed is fetched
+- then tracks are filtered again for usable artwork URLs
+- then the resulting track set is cached again
+
+So a fresh request means:
+
+- old payload gone
+- old artwork files gone
+- new feed fetched from the deployed backend
+- new artwork cache repopulated
+
+### Artwork Validation And Cache Safety
+
+Tracks are rejected if artwork is not usable.
+
+Current protections:
+
+- [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts) keeps only tracks with non-empty artwork URLs
+- [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts) only rewrites artwork URLs to local cached files if those files exist
+- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx) filters out blank-media projects before rendering
+
+### Session Stability
+
+To avoid visible reloading while the user is using the app:
+
+- the active stack list is chosen once at boot or on manual refresh
+- the overview is hidden until that feed has been warmed
+- the single-stack page preloads the tapped stack assets before opening
+- backing out of a stack restores the previous overview scroll position
+
+## Feed Rules
+
+The current MusicBrainz feed logic aims to return random 2026 tracks with usable artwork.
+
+Current behavior in [services/musicBrainzRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzRandomTracks.ts):
+
+- searches recordings from the current system year
+- includes albums, singles, and EPs
+- keeps official releases
+- currently has dedupe logic commented out for debugging
+
+## Vercel Flow
+
+The deployed flow now works like this:
+
+1. cron calls [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
+2. that route fetches a fresh 128-track MusicBrainz payload
+3. the payload is stored in KV by [services/dailyTracksStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyTracksStore.ts)
+4. app clients call [api/musicbrainz/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-tracks.ts)
+5. that route serves the stored payload instead of rebuilding the feed every time
+
+The `random-tracks` route also has a bootstrap path:
+
+- if KV is empty, it acquires a lock
+- generates the first payload once
+- stores it
+- serves it
+
+This prevents every app open from doing a fresh live MusicBrainz discovery run.
+
+## Local Pool Generation
+
+There is now a local generator script that can build a large validated yearly track pool and download artwork files:
+
+- [scripts/generate-musicbrainz-track-pool.mjs](/c:/Users/jsy30/Desktop/RECORDROOM/scripts/generate-musicbrainz-track-pool.mjs)
+
+Run it with:
+
+```bash
+npm run generate:track-pool
+```
+
+What it does:
+
+- fetches current-year MusicBrainz recordings in pages
+- keeps only releases from the current system year
+- rejects duplicates by release, artwork, track signature, and album signature
+- caps artists to 2 tracks
+- downloads cover art files locally and only keeps entries whose artwork download succeeds
+- writes metadata JSON to `generated/musicbrainz-track-pool-YYYY.json`
+- writes artwork files to `generated/track-artwork/`
+
+The generator targets `3840` valid entries by default.
+
+## Publish To Vercel
+
+After generating the local pool, you can publish it to Vercel Blob and Redis with:
+
+```bash
+npm run publish:track-pool
+```
+
+This uses:
+
+- `BLOB_READ_WRITE_TOKEN` for Vercel Blob artwork uploads
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+
+What it does:
+
+- reads `generated/musicbrainz-track-pool-YYYY.json`
+- uploads each artwork file from `generated/track-artwork/` to Vercel Blob
+- rewrites each track's `artwork_url` to the Blob URL
+- stores the published track payload in Redis under the live daily tracks key
+
+Recommended flow:
+
+1. `npm run generate:track-pool`
+2. `npm run publish:track-pool`
+3. redeploy or hit your existing `random-tracks` route
+
+With that flow, the app can stay fast because it reads prepared metadata from Redis and image files from Blob instead of rebuilding live from MusicBrainz.
+
+## Stack Construction
+
+Track stacks are built in:
+
+- [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
+
+Current behavior:
+
+- only tracks with non-empty artwork URLs are used
+- stacks can have fewer than 4 entries if the accepted pool is smaller or filtered down
+- shorter stacks are not padded with fake placeholder entries in the active track flow
+
+## Debugging Notes
+
+Useful current debug behaviors:
+
+- `Fresh Request` under the overview hamburger forces a full fresh request
+- that request clears all cached payload and artwork first
+- local device cache is separate from the Vercel KV cache
+- if you want fresh deployed data, hit the refresh route or redeploy after backend changes
+
+If you are testing fresh feed generation repeatedly, the main files to inspect are:
+
+- [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts)
 - [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts)
 - [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
-- [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
-- [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
-- [screens/Partition16Screen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/Partition16Screen.tsx)

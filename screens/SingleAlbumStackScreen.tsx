@@ -10,6 +10,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
+import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOverviewScreen";
 
 export type StackProject = {
   id: string;
@@ -34,6 +35,7 @@ type SingleAlbumStackScreenProps = {
   onRemoveProject?: (project: StackProject, index: number) => void;
   stackWidthOverride?: number;
   introRotationOffsetDeg?: number;
+  introLayerSnapshots?: PreviewLayerSnapshot[];
 };
 
 function normalise(value: number, size: number) {
@@ -104,8 +106,13 @@ export default function SingleAlbumStackScreen({
   onRemoveProject,
   stackWidthOverride,
   introRotationOffsetDeg = 0,
+  introLayerSnapshots,
 }: SingleAlbumStackScreenProps) {
-  const N = projects.length;
+  const renderProjects = useMemo(
+    () => projects.filter((project) => project.type !== "image" || project.media.trim().length > 0),
+    [projects]
+  );
+  const N = renderProjects.length;
   const visibleDepth = getVisibleDepth(N);
   const [viewportWidth, setViewportWidth] = useState(Dimensions.get("window").width);
   const [viewportHeight, setViewportHeight] = useState(Dimensions.get("window").height);
@@ -139,40 +146,34 @@ export default function SingleAlbumStackScreen({
   useEffect(() => {
     let cancelled = false;
 
-    const boot = async () => {
-      setStackReady(false);
+    const boot = () => {
+      setStackReady(true);
       progressRef.current = 0;
       targetRef.current = 0;
       setFrameValue(0);
-      setLoadedMap({});
-
-      await Promise.all(
-        projects.map(async (project) => {
-          if (project.type !== "image" || !project.media) return;
-          try {
-            await Image.prefetch(project.media);
-          } catch {
-            // Ignore prefetch failures and keep rendering.
-          }
-        })
-      );
-
-      if (cancelled) return;
-
       setLoadedMap(
-        projects.reduce<Record<string, boolean>>((acc, project) => {
+        renderProjects.reduce<Record<string, boolean>>((acc, project) => {
           acc[project.id] = project.type !== "image" || !project.media;
           return acc;
         }, {})
       );
-      setStackReady(true);
+
+      // Warm a couple of likely-visible images in the background without blocking the screen.
+      renderProjects
+        .slice(0, Math.min(2, renderProjects.length))
+        .forEach((project) => {
+          if (project.type !== "image" || !project.media) return;
+          void Image.prefetch(project.media).catch(() => {
+            // Ignore prefetch failures and let the normal image request path handle it.
+          });
+        });
     };
 
     boot();
     return () => {
       cancelled = true;
     };
-  }, [projects]);
+  }, [renderProjects]);
 
   useEffect(() => {
     onActiveIndexChangeRef.current = onActiveIndexChange;
@@ -222,7 +223,7 @@ export default function SingleAlbumStackScreen({
     return () => {
       animation.stop();
     };
-  }, [enableIntroAnimation, introProgress, projects]);
+  }, [enableIntroAnimation, introProgress, renderProjects]);
 
   useEffect(() => {
     const animate = () => {
@@ -327,8 +328,8 @@ export default function SingleAlbumStackScreen({
     stackWidthOverride ??
     (viewportWidth >= 756 && viewportWidth <= 1245 ? 360 : clamp(viewportWidth * 0.88, 280, 420));
   const messyOffsets = useMemo(
-    () => projects.map((project, index) => getMessyCardOffset(project.id, index, stackWidth)),
-    [projects, stackWidth]
+    () => renderProjects.map((project, index) => getMessyCardOffset(project.id, index, stackWidth)),
+    [renderProjects, stackWidth]
   );
 
   const cardHeight = stackWidth;
@@ -338,8 +339,12 @@ export default function SingleAlbumStackScreen({
   const stepProgress = rawP - Math.floor(rawP);
   const currentSlotBase = Math.floor(rawP);
   const activeSlot = normalise(currentSlotBase, N);
-  const activeProject = projects[activeSlot];
+  const activeProject = renderProjects[activeSlot];
   const isActiveProjectSaved = activeProject ? isProjectSaved?.(activeProject) === true : false;
+
+  if (N === 0) {
+    return <View style={styles.outer} />;
+  }
 
   return (
     <View style={[styles.outer, { transform: [{ translateY: verticalShift }] }]}>
@@ -354,7 +359,7 @@ export default function SingleAlbumStackScreen({
           },
         ]}
       >
-        {projects.map((project, index) => {
+        {renderProjects.map((project, index) => {
           const orderedDist = normalise(index - activeSlot, N);
           const rel = orderedDist - stepProgress;
           const absRel = Math.abs(rel);
@@ -430,7 +435,11 @@ export default function SingleAlbumStackScreen({
             );
 
           const messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
-          const introRotateStart = messy.rotate + introRotationOffsetDeg * Math.max(0.42, 1 - index * 0.18);
+          const snapshot = introLayerSnapshots?.[index];
+          const introTranslateXStart = snapshot?.translateX ?? messy.x;
+          const introTranslateYStart = snapshot?.translateY ?? messy.y;
+          const introRotateStart =
+            (snapshot?.rotateDeg ?? messy.rotate) + introRotationOffsetDeg * Math.max(0.42, 1 - index * 0.18);
           const canInteract = !introLocked && absRel < 0.35;
 
           return (
@@ -454,13 +463,13 @@ export default function SingleAlbumStackScreen({
                       {
                         translateX: introProgress.interpolate({
                           inputRange: [0, 1],
-                          outputRange: [messy.x, 0],
+                          outputRange: [introTranslateXStart, 0],
                         }),
                       },
                       {
                         translateY: introProgress.interpolate({
                           inputRange: [0, 1],
-                          outputRange: [messy.y, 0],
+                          outputRange: [introTranslateYStart, 0],
                         }),
                       },
                       {

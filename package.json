@@ -6,9 +6,12 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "generate:track-pool": "node scripts/generate-musicbrainz-track-pool.mjs",
+    "publish:track-pool": "node scripts/publish-track-pool-to-vercel.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^1.1.1",
     "expo": "^54.0.0",
     "expo-image": "^55.0.6",
     "expo-status-bar": "~3.0.9",

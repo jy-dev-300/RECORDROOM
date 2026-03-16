@@ -67,6 +67,34 @@ function chunkItems<T>(items: T[], size: number) {
   return chunks;
 }
 
+function hasArtwork(track: FeedTrack) {
+  return typeof track.artwork_url === "string" && track.artwork_url.trim().length > 0;
+}
+
+function distributeTracksAcrossStacks(tracks: FeedTrack[]) {
+  const artworkTracks = tracks.filter(hasArtwork);
+  if (artworkTracks.length === 0) {
+    return [];
+  }
+
+  const stackCount = Math.min(STACK_COUNT, Math.ceil(artworkTracks.length / TRACKS_PER_STACK));
+  const baseSize = Math.floor(artworkTracks.length / stackCount);
+  const remainder = artworkTracks.length % stackCount;
+  const groups: FeedTrack[][] = [];
+  let cursor = 0;
+
+  for (let index = 0; index < stackCount; index += 1) {
+    const size = baseSize + (index < remainder ? 1 : 0);
+    const group = artworkTracks.slice(cursor, cursor + size).slice(0, TRACKS_PER_STACK);
+    cursor += size;
+    if (group.length > 0) {
+      groups.push(group);
+    }
+  }
+
+  return groups;
+}
+
 function getTrackTitle(track: FeedTrack) {
   return track.user?.username ? `${track.title} - ${track.user.username}` : track.title;
 }
@@ -94,8 +122,7 @@ export function createTrackStackFromTracks(tracks: FeedTrack[], stackIndex: numb
 }
 
 export function createTrackStacksFromTracks(tracks: FeedTrack[]) {
-  return chunkItems(tracks, TRACKS_PER_STACK)
-    .slice(0, STACK_COUNT)
+  return distributeTracksAcrossStacks(tracks)
     .map((trackGroup, stackIndex) => createTrackStackFromTracks(trackGroup, stackIndex));
 }
 

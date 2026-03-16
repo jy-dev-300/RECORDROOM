@@ -143,6 +143,7 @@ export function buildAlbumWorldLayout(width: number, height: number): AlbumWorld
   while (previewSize > minPreview && getPreviewPressableHeight(previewSize) > maxRowHeight) {
     previewSize -= 1;
   }
+  previewSize = Math.max(1, Math.floor(previewSize * 0.98));
 
   const rowHeight = getPreviewPressableHeight(previewSize);
   const sectionHeight = sectionInnerPadding * 2 + rowHeight;

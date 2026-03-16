@@ -1,14 +1,20 @@
 import { config } from "./config";
 import {
+  clearTrackCache,
   loadCachedDailyTracks,
   prefetchTrackArtworkCache,
   saveDailyTracksPayload,
 } from "./deviceTrackCache";
+import { fetchRandomMusicBrainzTracks } from "./musicBrainzRandomTracks";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type RandomTracksResponse = {
   tracks: FeedTrack[];
 };
+
+function hasArtwork(track: FeedTrack) {
+  return typeof track.artwork_url === "string" && track.artwork_url.trim().length > 0;
+}
 
 function assertTracksResponse(data: unknown): asserts data is RandomTracksResponse {
   if (!data || typeof data !== "object") {
@@ -29,7 +35,26 @@ function getApiUrl(path: string) {
   return `${config.api.baseUrl.replace(/\/$/, "")}${path}`;
 }
 
+function shouldUseDirectMusicBrainzFetch() {
+  const baseUrl = config.api.baseUrl.trim();
+  if (!baseUrl) {
+    return true;
+  }
+
+  return /:8081(?:\/|$)/.test(baseUrl);
+}
+
 export async function fetchRandomTracks() {
+  await clearTrackCache();
+
+  if (shouldUseDirectMusicBrainzFetch()) {
+    const tracks = (await fetchRandomMusicBrainzTracks()).filter(hasArtwork);
+    return {
+      tracks,
+      tracksById: new Map(tracks.map((track) => [track.id, track])),
+    };
+  }
+
   const response = await fetch(getApiUrl("/api/musicbrainz/random-tracks"));
 
   if (!response.ok) {
@@ -40,9 +65,11 @@ export async function fetchRandomTracks() {
   const raw = await response.json();
   assertTracksResponse(raw);
 
+  const tracks = raw.tracks.filter(hasArtwork);
+
   return {
-    tracks: raw.tracks,
-    tracksById: new Map(raw.tracks.map((track) => [track.id, track])),
+    tracks,
+    tracksById: new Map(tracks.map((track) => [track.id, track])),
   };
 }
 
@@ -52,13 +79,16 @@ export async function loadCachedRandomTracks() {
     return null;
   }
 
+  const tracks = payload.tracks.filter(hasArtwork);
+
   return {
-    tracks: payload.tracks,
-    tracksById: new Map(payload.tracks.map((track) => [track.id, track])),
+    tracks,
+    tracksById: new Map(tracks.map((track) => [track.id, track])),
   };
 }
 
 export async function cacheRandomTracks(payload: { tracks: FeedTrack[] }) {
+  await clearTrackCache();
   await saveDailyTracksPayload(payload);
   void prefetchTrackArtworkCache(payload);
 }
