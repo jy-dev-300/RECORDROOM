@@ -71,6 +71,27 @@ function hasArtwork(track: FeedTrack) {
   return typeof track.artwork_url === "string" && track.artwork_url.trim().length > 0;
 }
 
+function getReleaseYear(track: FeedTrack) {
+  if (typeof track.release_year === "number") {
+    return track.release_year;
+  }
+
+  const sourceYear = track.source?.year;
+  if (typeof sourceYear === "number") {
+    return sourceYear;
+  }
+
+  const releaseDate = track.source?.release_date;
+  if (typeof releaseDate === "string") {
+    const match = /^(\d{4})/.exec(releaseDate);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return null;
+}
+
 function distributeTracksAcrossStacks(tracks: FeedTrack[]) {
   const artworkTracks = tracks.filter(hasArtwork);
   if (artworkTracks.length === 0) {
@@ -95,10 +116,6 @@ function distributeTracksAcrossStacks(tracks: FeedTrack[]) {
   return groups;
 }
 
-function getTrackTitle(track: FeedTrack) {
-  return track.user?.username ? `${track.title} - ${track.user.username}` : track.title;
-}
-
 function getTrackColor(trackId: number, layerIndex: number) {
   const seed = Array.from(String(trackId)).reduce((total, char) => total + char.charCodeAt(0), 0);
   const hue = (seed * 19 + layerIndex * 37) % 360;
@@ -112,7 +129,10 @@ export function createTrackStackFromTracks(tracks: FeedTrack[], stackIndex: numb
     id: `soundcloud-stack-${stackIndex}-${tracks.map((track) => track.id).join("-")}`,
     projects: tracks.map((track, cardIndex) => ({
       id: String(track.id),
-      title: getTrackTitle(track),
+      title: track.title,
+      artistName: track.user?.username ?? null,
+      releaseYear: getReleaseYear(track),
+      releaseTitle: track.source?.release_title ?? null,
       media: track.artwork_url ?? "",
       thumbnail: track.artwork_url ?? undefined,
       type: "image" as const,

@@ -1,9 +1,9 @@
 import {
   acquireDailyTracksRefreshLock,
+  getStoredDailyTracks,
   releaseDailyTracksRefreshLock,
-  setStoredDailyTracks,
 } from "../../services/dailyTracksStore";
-import { fetchRandomMusicBrainzTracks } from "../../services/musicBrainzRandomTracks";
+import type { FeedTrack } from "../../services/soundCloudRandomTracks";
 
 type RequestLike = {
   method?: string;
@@ -16,6 +16,27 @@ type ResponseLike = {
     json: (body: unknown) => void;
   };
 };
+
+const RANDOM_TRACK_COUNT = 128;
+
+function shuffle<T>(items: T[]) {
+  const copy = [...items];
+
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
+  }
+
+  return copy;
+}
+
+function sampleTracks(tracks: FeedTrack[], count: number) {
+  if (tracks.length <= count) {
+    return tracks;
+  }
+
+  return shuffle(tracks).slice(0, count);
+}
 
 function getHeader(headers: RequestLike["headers"], name: string) {
   if (!headers) return undefined;
@@ -52,13 +73,18 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     let freshCount = 0;
+    let sourcePoolCount = 0;
     try {
-      const tracks = await fetchRandomMusicBrainzTracks();
-      freshCount = tracks.length;
-      await setStoredDailyTracks({
-        tracks,
-        generatedAt: new Date().toISOString(),
-      });
+      const payload = await getStoredDailyTracks();
+      if (!payload) {
+        res.status(503).json({
+          error: "Track pool is not published yet. Run the publish pipeline first.",
+        });
+        return;
+      }
+
+      sourcePoolCount = payload.tracks.length;
+      freshCount = sampleTracks(payload.tracks, RANDOM_TRACK_COUNT).length;
     } finally {
       await releaseDailyTracksRefreshLock();
     }
@@ -68,6 +94,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       refreshed: true,
       generatedAt: new Date().toISOString(),
       trackCount: freshCount,
+      sourcePoolCount,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown MusicBrainz refresh failure";

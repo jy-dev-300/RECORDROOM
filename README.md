@@ -1,8 +1,76 @@
 # RECORDROOM
 
+## Tech Stack
+
+### Frontend
+
+- `Expo` / `React Native`
+- `TypeScript`
+- `react-native-reanimated`
+- `react-native-gesture-handler`
+- `expo-image`
+
+The frontend is the app running on the device through Expo. It is responsible for:
+
+- rendering the overview grid and single-stack screens
+- caching the selected track payload on device
+- caching artwork files on device
+- calling the backend API for prepared track metadata
+
+Main frontend files:
+
+- [App.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/App.tsx)
+- [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
+- [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
+- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx)
+- [components/TrackStackPreviewOnOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/components/TrackStackPreviewOnOverviewScreen.tsx)
+- [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
+
+### Backend
+
+- `Vercel Functions`
+- `Redis` for prepared track metadata
+- `Vercel Blob` for artwork files
+
+The backend is only the data/API layer. It is responsible for:
+
+- serving the prepared daily track payload
+- storing and reading metadata from Redis
+- serving artwork files from Blob URLs
+- optionally running refresh/admin routes
+
+Main backend files:
+
+- [api/musicbrainz/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-tracks.ts)
+- [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
+- [services/dailyTracksStore.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/dailyTracksStore.ts)
+
+### Offline / Publishing Pipeline
+
+- local Node scripts
+- MusicBrainz search
+- local JSON + local artwork download
+- publish step to Redis + Blob
+
+This pipeline is not part of normal app use. It is for preparing the feed ahead of time.
+
+Main pipeline files:
+
+- [scripts/generate-musicbrainz-track-pool.mjs](/c:/Users/jsy30/Desktop/RECORDROOM/scripts/generate-musicbrainz-track-pool.mjs)
+- [scripts/publish-track-pool-to-vercel.mjs](/c:/Users/jsy30/Desktop/RECORDROOM/scripts/publish-track-pool-to-vercel.mjs)
+- [scripts/publish-track-metadata-from-blob.mjs](/c:/Users/jsy30/Desktop/RECORDROOM/scripts/publish-track-metadata-from-blob.mjs)
+
+## Architecture Flow
+
+1. A local script generates a validated yearly pool of tracks and artwork.
+2. A publish script uploads artwork files to Blob and metadata to Redis.
+3. The Expo app calls the Vercel backend for a prepared track payload.
+4. The backend returns Redis metadata that already points at Blob artwork URLs.
+5. The app caches that payload and artwork locally, then builds overview/detail stacks from it.
+
 ## Current Feed Setup
 
-The active app flow now expects a Vercel-backed MusicBrainz track feed that is prepared ahead of time and stored in KV.
+The active app flow now expects a Vercel-backed MusicBrainz track feed that is prepared ahead of time and stored in Redis.
 
 Main files:
 
@@ -28,14 +96,15 @@ EXPO_PUBLIC_API_BASE_URL=https://your-project.vercel.app
 CRON_SECRET=your_cron_secret
 KV_REST_API_URL=https://your-upstash-endpoint
 KV_REST_API_TOKEN=your-upstash-token
+BLOB_READ_WRITE_TOKEN=your_blob_token
 ```
 
 Behavior:
 
 - the app fetches tracks from `/api/musicbrainz/random-tracks`
 - Vercel cron hits `/api/musicbrainz/refresh-daily`
-- the prepared daily payload is stored in KV
-- if the random-tracks route sees an empty KV cache, it bootstraps once and stores the result
+- the prepared daily payload is stored in Redis
+- artwork files live in Vercel Blob
 
 ## Caching Logic
 

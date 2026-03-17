@@ -33,6 +33,7 @@ type SavedTrackDictionary = {
 };
 
 async function prefetchStackAssets(projects: StackProject[]) {
+  // Warm just the artwork files for a stack so detail view opens without visible pop-in.
   await Promise.allSettled(
     projects.map(async (project) => {
       if (project.type !== "image" || !project.media.trim()) {
@@ -45,11 +46,13 @@ async function prefetchStackAssets(projects: StackProject[]) {
 }
 
 async function warmTrackSet(tracks: FeedTrack[]) {
+  // Rebuild the same stack grouping the UI uses, then warm each stack's images.
   const stacks = createTrackStacksFromTracks(tracks);
   await Promise.allSettled(stacks.map((stack) => prefetchStackAssets(stack.projects)));
 }
 
 function warmTrackSetInBackground(tracks: FeedTrack[]) {
+  // Background warmup should never block rendering.
   void warmTrackSet(tracks);
 }
 
@@ -81,6 +84,7 @@ export default function ScreenFlowControl() {
   );
 
   const refreshFeed = async (options?: { preferCache?: boolean; preserveVisibleFeed?: boolean }) => {
+    // During manual refreshes we can keep the current UI visible until the replacement payload is ready.
     const preserveVisibleFeed = options?.preserveVisibleFeed === true;
     const previousTracks = feedTracks;
 
@@ -90,6 +94,7 @@ export default function ScreenFlowControl() {
 
     if (options?.preferCache !== false) {
       try {
+        // First try the device cache so a normal launch feels immediate.
         const cached = await loadCachedRandomTracks();
         if (cached && cached.tracks.length > 0) {
           setFeedTracks(cached.tracks);
@@ -103,6 +108,7 @@ export default function ScreenFlowControl() {
     }
 
     try {
+      // If cache is unavailable or bypassed, fetch the prepared backend payload.
       const result = await fetchRandomTracks();
       if (result.tracks.length === 0) {
         if (previousTracks.length > 0) {
@@ -119,6 +125,7 @@ export default function ScreenFlowControl() {
       void cacheRandomTracks(result);
     } catch (error) {
       console.warn("MusicBrainz track fetch failed; no track stacks available.", error);
+      // On failure, keep the prior visible feed if we have one so the app never collapses to nothing.
       if (previousTracks.length > 0) {
         setFeedTracks(previousTracks);
       } else {
@@ -134,6 +141,7 @@ export default function ScreenFlowControl() {
     const bootFeed = async () => {
       try {
         if (cancelled) return;
+        // Boot prefers cache so the first usable feed appears with minimal waiting.
         await refreshFeed({ preferCache: true });
       } catch {
         if (!cancelled) {
@@ -165,6 +173,7 @@ export default function ScreenFlowControl() {
       return activeTrackStacks;
     }
 
+    // "My Tracks" is a filtered projection over the main stack set, not a separate data source.
     return Object.keys(savedTracksSet)
       .map((trackId) => {
         const found = projectLookup.get(trackId);
@@ -192,6 +201,7 @@ export default function ScreenFlowControl() {
       return allTrackSections;
     }
 
+    // Re-chunk the filtered stack list so the overview layout code can stay shared.
     return chunkItems(overviewStacks, STACKS_PER_SECTION);
   }, [allTrackSections, overviewMode, overviewStacks]);
 
@@ -212,6 +222,7 @@ export default function ScreenFlowControl() {
   const playingStack = playingProject != null ? activeTrackStacks[playingProject.stackIndex] ?? null : null;
 
   const handleSaveProject = (project: StackProject) => {
+    // Saved tracks are tracked by project id so the same item stays stable across screens.
     setSavedTracksSet((current) => {
       if (current[project.id]) return current;
       return {
@@ -253,6 +264,7 @@ export default function ScreenFlowControl() {
   };
 
   const handleGlobalBack = () => {
+    // Back behavior is centralized here so gestures and buttons follow the same rules.
     if (playingProject != null) {
       handleBackFromPlay();
       return;
@@ -323,6 +335,7 @@ export default function ScreenFlowControl() {
       return <View style={styles.pageRoot} />;
     }
 
+    // Once a stack is selected, the flow switches from overview mode into the single-stack experience.
     return (
       <View style={styles.detailPage}>
         <View pointerEvents="box-none" style={styles.detailNavLayer}>
@@ -393,6 +406,7 @@ export default function ScreenFlowControl() {
   }
 
   if (!feedReady) {
+    // While booting, render a blank root instead of half-built UI.
     return <View style={styles.pageRoot} />;
   }
 
@@ -412,6 +426,7 @@ export default function ScreenFlowControl() {
         onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
           const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
           if (sourceStackIndex == null) return;
+          // Before opening detail, warm the tapped stack so the transition lands on already-ready art.
           await prefetchStackAssets(activeTrackStacks[sourceStackIndex]?.projects ?? []);
           setShouldAnimateDetailIntro(true);
           setReturningFromPlayOptions(false);

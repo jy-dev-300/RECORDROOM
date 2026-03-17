@@ -37,6 +37,14 @@ export type FeedTrack = {
   genre: string | null;
   likes_count: number;
   playback_count: number;
+  release_year?: number | null;
+  source?: {
+    recording_id?: string;
+    release_id?: string;
+    release_title?: string | null;
+    release_date?: string | null;
+    year?: number | null;
+  } | null;
   user: {
     id: number;
     username: string | null;

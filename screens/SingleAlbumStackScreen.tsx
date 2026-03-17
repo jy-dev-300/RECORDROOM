@@ -8,6 +8,7 @@ import {
   PanResponder,
   Pressable,
   StyleSheet,
+  Text,
   View,
 } from "react-native";
 import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOverviewScreen";
@@ -15,6 +16,9 @@ import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOver
 export type StackProject = {
   id: string;
   title: string;
+  artistName?: string | null;
+  releaseYear?: number | null;
+  releaseTitle?: string | null;
   media: string;
   thumbnail?: string;
   type: "image" | "video";
@@ -494,6 +498,20 @@ export default function SingleAlbumStackScreen({
           );
         })}
       </View>
+      {activeProject ? (
+        <View style={styles.infoBlock}>
+          <Text numberOfLines={1} style={styles.trackTitle}>
+            {activeProject.title}
+          </Text>
+          <Text numberOfLines={1} style={styles.trackMeta}>
+            <Text style={styles.metaLabel}>by </Text>
+            {activeProject.artistName ?? "Unknown Artist"}
+          </Text>
+          {activeProject.releaseYear != null ? (
+            <Text style={styles.trackMeta}>{String(activeProject.releaseYear)}</Text>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.controlsRow}>
         <Pressable
           style={styles.actionButton}
@@ -557,6 +575,29 @@ const styles = StyleSheet.create({
   },
   stack: {
     position: "relative",
+  },
+  infoBlock: {
+    marginTop: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 62,
+    paddingHorizontal: 28,
+  },
+  trackTitle: {
+    color: "#111111",
+    fontSize: 20,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  trackMeta: {
+    marginTop: 4,
+    color: "rgba(17,17,17,0.72)",
+    fontSize: 14,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  metaLabel: {
+    fontStyle: "italic",
   },
   controlsRow: {
     marginTop: 18,
