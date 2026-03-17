@@ -14,6 +14,7 @@ import {
   type TrackWorldLayout,
 } from "../lib/trackWorldLayout";
 import {
+  NAV_LEFT_INSET,
   NAV_BUTTON_SIZE,
   NAV_ICON_SIZE,
   NAV_RIGHT_INSET,
@@ -32,6 +33,7 @@ type TracksOverviewScreenProps = {
   sections: TrackStack[][];
   previewRevealPrimed?: boolean;
   isMyTracksView?: boolean;
+  onBack?: () => void;
   onPressMyTracks?: () => void;
   onPressAllTracks?: () => void;
   onPressRefresh?: () => void;
@@ -163,6 +165,7 @@ export default function TracksOverviewScreen({
   sections,
   previewRevealPrimed = false,
   isMyTracksView = false,
+  onBack,
   onPressMyTracks,
   onPressAllTracks,
   onPressRefresh,
@@ -329,21 +332,17 @@ export default function TracksOverviewScreen({
           })}
         </View>
       </Animated.ScrollView>
+      {onBack ? (
+        <Pressable hitSlop={20} onPress={onBack} style={[styles.backButton, { top: navTop }]}>
+          <Text style={styles.backArrow}>{"\u2190"}</Text>
+        </Pressable>
+      ) : null}
       <View style={[styles.topRightMenuWrap, { top: navTop }]}>
         <Pressable onPress={() => setMenuOpen((current) => !current)} style={styles.hamburger}>
           <Text style={styles.hamburgerText}>{"\u2630"}</Text>
         </Pressable>
         {menuOpen ? (
           <View style={styles.menuSheet}>
-            <Pressable
-              onPress={() => {
-                setMenuOpen(false);
-                onPressRefresh?.();
-              }}
-              style={styles.menuItem}
-            >
-              <Text style={styles.menuItemText}>Fresh Request</Text>
-            </Pressable>
             {isMyTracksView ? (
               <Pressable
                 onPress={() => {
@@ -388,6 +387,21 @@ const styles = StyleSheet.create({
   stackPressable: {
     alignItems: "center",
     justifyContent: "flex-end",
+  },
+  backButton: {
+    position: "absolute",
+    left: NAV_LEFT_INSET,
+    zIndex: NAV_Z_INDEX,
+    width: NAV_BUTTON_SIZE,
+    height: NAV_BUTTON_SIZE,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  backArrow: {
+    color: "#111111",
+    fontSize: NAV_ICON_SIZE,
+    fontWeight: "600",
+    lineHeight: NAV_ICON_SIZE,
   },
   topRightMenuWrap: {
     position: "absolute",

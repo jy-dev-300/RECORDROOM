@@ -1,5 +1,5 @@
 import { Pressable, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import type { StackProject } from "./SingleAlbumStackScreen";
+import type { StackProject } from "./SingleTrackStackScreen";
 import HorizontalOrbitCarouselRow from "../components/HorizontalOrbitCarouselRow";
 
 type GiftCreationPageProps = {

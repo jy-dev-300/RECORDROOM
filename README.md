@@ -22,7 +22,7 @@ Main frontend files:
 - [App.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/App.tsx)
 - [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
 - [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
-- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx)
+- [screens/SingleTrackStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleTrackStackScreen.tsx)
 - [components/TrackStackPreviewOnOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/components/TrackStackPreviewOnOverviewScreen.tsx)
 - [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
 
@@ -81,7 +81,7 @@ Main files:
 - [services/ScreenFlowControl.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/services/ScreenFlowControl.tsx)
 - [data/trackStacks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/data/trackStacks.ts)
 - [screens/TracksOverviewScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/TracksOverviewScreen.tsx)
-- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx)
+- [screens/SingleTrackStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleTrackStackScreen.tsx)
 - [api/musicbrainz/random-tracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/random-tracks.ts)
 - [api/musicbrainz/refresh-daily.ts](/c:/Users/jsy30/Desktop/RECORDROOM/api/musicbrainz/refresh-daily.ts)
 
@@ -171,7 +171,7 @@ Current protections:
 
 - [services/musicBrainzTrackFetchService.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzTrackFetchService.ts) keeps only tracks with non-empty artwork URLs
 - [services/deviceTrackCache.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/deviceTrackCache.ts) only rewrites artwork URLs to local cached files if those files exist
-- [screens/SingleAlbumStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleAlbumStackScreen.tsx) filters out blank-media projects before rendering
+- [screens/SingleTrackStackScreen.tsx](/c:/Users/jsy30/Desktop/RECORDROOM/screens/SingleTrackStackScreen.tsx) filters out blank-media projects before rendering
 
 ### Session Stability
 
@@ -189,7 +189,7 @@ The current MusicBrainz feed logic aims to return random 2026 tracks with usable
 Current behavior in [services/musicBrainzRandomTracks.ts](/c:/Users/jsy30/Desktop/RECORDROOM/services/musicBrainzRandomTracks.ts):
 
 - searches recordings from the current system year
-- includes albums, singles, and EPs
+- includes long-form releases, singles, and EPs
 - keeps official releases
 - currently has dedupe logic commented out for debugging
 
@@ -228,7 +228,7 @@ What it does:
 
 - fetches current-year MusicBrainz recordings in pages
 - keeps only releases from the current system year
-- rejects duplicates by release, artwork, track signature, and album signature
+- rejects duplicates by release, artwork, track signature, and release signature
 - caps artists to 2 tracks
 - downloads cover art files locally and only keeps entries whose artwork download succeeds
 - writes metadata JSON to `generated/musicbrainz-track-pool-YYYY.json`

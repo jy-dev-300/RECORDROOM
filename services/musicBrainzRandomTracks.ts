@@ -103,7 +103,7 @@ function getTrackSignature(recording: MusicBrainzRecording) {
   return `${artist}::${title}`;
 }
 
-function getAlbumSignature(recording: MusicBrainzRecording, release: MusicBrainzReleaseSummary) {
+function getReleaseSignature(recording: MusicBrainzRecording, release: MusicBrainzReleaseSummary) {
   const artist = normalizeForDedupe(getArtistName(recording["artist-credit"]));
   const releaseTitle = normalizeForDedupe(release.title);
   return `${artist}::${releaseTitle}`;
@@ -185,8 +185,11 @@ function getCurrentYearDateRange() {
 
 function buildRecordingQuery() {
   const { start, end } = getCurrentYearDateRange();
+  const releaseKinds = ["album", "single", "ep"]
+    .map((kind) => `primarytype:${kind}`)
+    .join(" OR ");
   return encodeURIComponent(
-    `(primarytype:album OR primarytype:single OR primarytype:ep) AND status:official AND date:[${start} TO ${end}] AND dur:[90000 TO 480000]`
+    `(${releaseKinds}) AND status:official AND date:[${start} TO ${end}] AND dur:[90000 TO 480000]`
   );
 }
 
@@ -194,7 +197,7 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
   // const seenTrackIds = new Set<number>();
   // const seenReleaseIds = new Set<string>();
   // const seenTrackSignatures = new Set<string>();
-  // const seenAlbumSignatures = new Set<string>();
+  // const seenReleaseSignatures = new Set<string>();
   // const seenArtworkUrls = new Set<string>();
   const perArtistCounts = new Map<number, number>();
   const collected: FeedTrack[] = [];
@@ -216,8 +219,8 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
       const signature = getTrackSignature(recording);
       // if (signature && seenTrackSignatures.has(signature)) continue;
 
-      const albumSignature = getAlbumSignature(recording, release);
-      // if (albumSignature && seenAlbumSignatures.has(albumSignature)) continue;
+      const releaseSignature = getReleaseSignature(recording, release);
+      // if (releaseSignature && seenReleaseSignatures.has(releaseSignature)) continue;
 
       const track = toFeedTrack(recording);
       if (!track) continue;
@@ -236,8 +239,8 @@ export async function fetchRandomMusicBrainzTracks(targetCount = TARGET_TRACK_CO
       // if (signature) {
       //   seenTrackSignatures.add(signature);
       // }
-      // if (albumSignature) {
-      //   seenAlbumSignatures.add(albumSignature);
+      // if (releaseSignature) {
+      //   seenReleaseSignatures.add(releaseSignature);
       // }
       // if (track.artwork_url) {
       //   seenArtworkUrls.add(track.artwork_url);

@@ -19,18 +19,16 @@ import {
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
 import GiftCreationPage from "../screens/GiftCreationPage";
+import MyTracksScreen from "../screens/MyTracksScreen";
 import PlayOptionsScreen from "../screens/PlayOptionsScreen";
 import SingleTrackStackScreen, { type StackProject } from "../screens/SingleTrackStackScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
 import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./musicBrainzTrackFetchService";
+import { loadSavedTracks, saveSavedTracks, type SavedTrackRecord } from "./deviceSavedTracks";
 import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOverviewScreen";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
-type OverviewMode = "all" | "my_tracks";
-type SavedTrackDictionary = {
-  track_id: string;
-  track_artwork: string;
-};
+type RootScreen = "all_tracks" | "my_tracks";
 
 async function prefetchStackAssets(projects: StackProject[]) {
   // Warm just the artwork files for a stack so detail view opens without visible pop-in.
@@ -63,16 +61,18 @@ export default function ScreenFlowControl() {
   const [selectedStackIndex, setSelectedStackIndex] = useState<number | null>(null);
   const [selectedStackIntroRotation, setSelectedStackIntroRotation] = useState(0);
   const [selectedStackIntroSnapshots, setSelectedStackIntroSnapshots] = useState<PreviewLayerSnapshot[] | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<StackProject[] | null>(null);
   const [shouldAnimateDetailIntro, setShouldAnimateDetailIntro] = useState(false);
   const [returningFromPlayOptions, setReturningFromPlayOptions] = useState(false);
-  const [playingProject, setPlayingProject] = useState<{ stackIndex: number; projectIndex: number } | null>(null);
-  const [giftingStackIndex, setGiftingStackIndex] = useState<number | null>(null);
-  const [overviewMode, setOverviewMode] = useState<OverviewMode>("all");
-  const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackDictionary>>({});
+  const [playingProject, setPlayingProject] = useState<{ projectIndex: number } | null>(null);
+  const [giftingProjects, setGiftingProjects] = useState<StackProject[] | null>(null);
+  const [rootScreen, setRootScreen] = useState<RootScreen>("all_tracks");
+  const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackRecord>>({});
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
   const [feedReady, setFeedReady] = useState(false);
   const [overviewScrollOffset, setOverviewScrollOffset] = useState(0);
+  const [myTracksScrollOffset, setMyTracksScrollOffset] = useState(0);
 
   const backGestureTriggered = useSharedValue(false);
 
@@ -158,6 +158,23 @@ export default function ScreenFlowControl() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootSavedTracks = async () => {
+      const savedTracks = await loadSavedTracks();
+      if (!cancelled) {
+        setSavedTracksSet(savedTracks);
+      }
+    };
+
+    void bootSavedTracks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const projectLookup = useMemo(() => {
     const map = new Map<string, { project: StackProject; stackIndex: number }>();
     activeTrackStacks.forEach((stack, stackIndex) => {
@@ -168,70 +185,51 @@ export default function ScreenFlowControl() {
     return map;
   }, [activeTrackStacks]);
 
-  const overviewStacks = useMemo(() => {
-    if (overviewMode === "all") {
-      return activeTrackStacks;
-    }
-
-    // "My Tracks" is a filtered projection over the main stack set, not a separate data source.
+  const savedTrackStacks = useMemo(() => {
     return Object.keys(savedTracksSet)
       .map((trackId) => {
-        const found = projectLookup.get(trackId);
-        if (!found) return null;
+        const savedTrack = savedTracksSet[trackId];
+        if (!savedTrack) return null;
         return {
           id: `saved-${trackId}`,
-          projects: [found.project],
+          projects: [savedTrack.project],
         };
       })
       .filter((value): value is (typeof activeTrackStacks)[number] => value != null);
-  }, [activeTrackStacks, overviewMode, projectLookup, savedTracksSet]);
+  }, [savedTracksSet]);
 
-  const overviewSourceStackIndexes = useMemo(() => {
-    if (overviewMode === "all") {
-      return activeTrackStacks.map((_, index) => index);
-    }
+  const myTrackSections = useMemo(
+    () => chunkItems(savedTrackStacks, STACKS_PER_SECTION),
+    [savedTrackStacks]
+  );
 
-    return Object.keys(savedTracksSet)
-      .map((trackId) => projectLookup.get(trackId)?.stackIndex ?? -1)
-      .filter((index) => index >= 0);
-  }, [activeTrackStacks, overviewMode, projectLookup, savedTracksSet]);
-
-  const sections = useMemo(() => {
-    if (overviewMode === "all") {
-      return allTrackSections;
-    }
-
-    // Re-chunk the filtered stack list so the overview layout code can stay shared.
-    return chunkItems(overviewStacks, STACKS_PER_SECTION);
-  }, [allTrackSections, overviewMode, overviewStacks]);
-
-  const overviewSourceSections = useMemo(() => {
-    if (overviewMode === "all") {
-      return allTrackSections.map((section) =>
+  const allTrackSourceSections = useMemo(
+    () =>
+      allTrackSections.map((section) =>
         section.map((stack) => activeTrackStacks.findIndex((candidate) => candidate.id === stack.id))
-      );
-    }
-
-    return chunkItems(overviewSourceStackIndexes, STACKS_PER_SECTION);
-  }, [activeTrackStacks, allTrackSections, overviewMode, overviewSourceStackIndexes]);
-
+      ),
+    [activeTrackStacks, allTrackSections]
+  );
   const overviewShift = 0;
   const navTop = insets.top;
-  const selectedStack = selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null;
-  const giftingStack = giftingStackIndex != null ? activeTrackStacks[giftingStackIndex] ?? null : null;
-  const playingStack = playingProject != null ? activeTrackStacks[playingProject.stackIndex] ?? null : null;
+  const selectedStack = selectedProjects ?? (selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null)?.projects ?? null;
+  const giftingStack = giftingProjects;
+  const playingStack = selectedStack;
 
   const handleSaveProject = (project: StackProject) => {
     // Saved tracks are tracked by project id so the same item stays stable across screens.
     setSavedTracksSet((current) => {
       if (current[project.id]) return current;
-      return {
+      const next = {
         ...current,
         [project.id]: {
           track_id: project.id,
           track_artwork: project.media || project.color,
+          project,
         },
       };
+      void saveSavedTracks(next);
+      return next;
     });
   };
 
@@ -240,6 +238,7 @@ export default function ScreenFlowControl() {
       if (!current[project.id]) return current;
       const next = { ...current };
       delete next[project.id];
+      void saveSavedTracks(next);
       return next;
     });
   };
@@ -248,6 +247,7 @@ export default function ScreenFlowControl() {
     if (selectedStackIndex == null) return;
     setMenuOpen(false);
     setSelectedStackIndex(null);
+    setSelectedProjects(null);
     setSelectedStackIntroRotation(0);
     setSelectedStackIntroSnapshots(null);
     setShouldAnimateDetailIntro(false);
@@ -260,7 +260,7 @@ export default function ScreenFlowControl() {
   };
 
   const handleBackFromGift = () => {
-    setGiftingStackIndex(null);
+    setGiftingProjects(null);
   };
 
   const handleGlobalBack = () => {
@@ -270,7 +270,7 @@ export default function ScreenFlowControl() {
       return;
     }
 
-    if (giftingStackIndex != null) {
+    if (giftingProjects != null) {
       handleBackFromGift();
       return;
     }
@@ -280,17 +280,17 @@ export default function ScreenFlowControl() {
       return;
     }
 
-    if (overviewMode === "my_tracks") {
+    if (rootScreen === "my_tracks") {
       setMenuOpen(false);
-      setOverviewMode("all");
+      setRootScreen("all_tracks");
     }
   };
 
   const canGoBack =
     playingProject != null ||
-    giftingStackIndex != null ||
-    selectedStackIndex != null ||
-    overviewMode === "my_tracks";
+    giftingProjects != null ||
+    selectedStack != null ||
+    rootScreen === "my_tracks";
 
   const globalBackGesture = Gesture.Pan()
     .maxPointers(1)
@@ -314,7 +314,7 @@ export default function ScreenFlowControl() {
     });
 
   if (playingProject != null) {
-    const projects = playingStack?.projects ?? [];
+    const projects = playingStack ?? [];
     return (
       <View style={styles.pageRoot}>
         <PlayOptionsScreen
@@ -330,8 +330,8 @@ export default function ScreenFlowControl() {
     );
   }
 
-  if (selectedStackIndex != null) {
-    if (!selectedStack) {
+  if (selectedStack != null) {
+    if (selectedStack.length === 0) {
       return <View style={styles.pageRoot} />;
     }
 
@@ -339,14 +339,14 @@ export default function ScreenFlowControl() {
     return (
       <View style={styles.detailPage}>
         <View pointerEvents="box-none" style={styles.detailNavLayer}>
-          {giftingStackIndex == null ? (
+          {giftingProjects == null ? (
             <GestureDetector gesture={globalBackGesture}>
               <View style={styles.detailBackGestureEdge} />
             </GestureDetector>
           ) : null}
           <Pressable
             hitSlop={20}
-            onPress={giftingStackIndex != null ? handleBackFromGift : handleBackFromDetail}
+            onPress={giftingProjects != null ? handleBackFromGift : handleBackFromDetail}
             style={[styles.backButton, { top: navTop }]}
           >
             <Text style={styles.backArrow}>{"\u2190"}</Text>
@@ -357,12 +357,12 @@ export default function ScreenFlowControl() {
             </Pressable>
             {menuOpen ? (
               <View style={styles.menuSheet}>
-                {overviewMode === "my_tracks" ? (
+                {rootScreen === "my_tracks" ? (
                   <Pressable
                     onPress={() => {
                       setMenuOpen(false);
                       setSelectedStackIndex(null);
-                      setOverviewMode("all");
+                      setRootScreen("all_tracks");
                     }}
                     style={styles.menuItem}
                   >
@@ -373,7 +373,7 @@ export default function ScreenFlowControl() {
                     onPress={() => {
                       setMenuOpen(false);
                       setSelectedStackIndex(null);
-                      setOverviewMode("my_tracks");
+                      setRootScreen("my_tracks");
                     }}
                     style={styles.menuItem}
                   >
@@ -385,16 +385,16 @@ export default function ScreenFlowControl() {
           </View>
         </View>
         <View style={styles.detailCanvas}>
-          {giftingStackIndex != null ? (
-            <GiftCreationPage projects={giftingStack?.projects ?? []} />
+          {giftingProjects != null ? (
+            <GiftCreationPage projects={giftingStack ?? []} />
           ) : (
             <SingleTrackStackScreen
-              projects={selectedStack.projects}
+              projects={selectedStack}
               enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
               introRotationOffsetDeg={selectedStackIntroRotation}
               introLayerSnapshots={selectedStackIntroSnapshots ?? undefined}
-              onPlayPress={(_, index) => setPlayingProject({ stackIndex: selectedStackIndex, projectIndex: index })}
-              onGiftPress={() => setGiftingStackIndex(selectedStackIndex)}
+              onPlayPress={(_, index) => setPlayingProject({ projectIndex: index })}
+              onGiftPress={() => setGiftingProjects(selectedStack)}
               isProjectSaved={(project) => savedTracksSet[project.id] != null}
               onSaveProject={(project) => handleSaveProject(project)}
               onRemoveProject={(project) => handleRemoveProject(project)}
@@ -412,37 +412,58 @@ export default function ScreenFlowControl() {
 
   return (
     <View style={styles.pageRoot}>
-      <TracksOverviewScreen
-        layout={layout}
-        sections={sections}
-        previewRevealPrimed={overviewPreviewPrimed}
-        isMyTracksView={overviewMode === "my_tracks"}
-        initialScrollOffset={overviewScrollOffset}
-        onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
-        onPressRefresh={() => {
-          void refreshFeed({ preferCache: false, preserveVisibleFeed: true });
-        }}
-        onScrollOffsetChange={setOverviewScrollOffset}
-        onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
-          const sourceStackIndex = overviewSourceSections[sectionIndex]?.[stackIndex];
-          if (sourceStackIndex == null) return;
-          // Before opening detail, warm the tapped stack so the transition lands on already-ready art.
-          await prefetchStackAssets(activeTrackStacks[sourceStackIndex]?.projects ?? []);
-          setShouldAnimateDetailIntro(true);
-          setReturningFromPlayOptions(false);
-          setSelectedStackIntroRotation(previewRotationDeg ?? 0);
-          setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
-          setSelectedStackIndex(sourceStackIndex);
-        }}
-        onPressMyTracks={() => {
-          setMenuOpen(false);
-          setOverviewMode("my_tracks");
-        }}
-        onPressAllTracks={() => {
-          setMenuOpen(false);
-          setOverviewMode("all");
-        }}
-      />
+      {rootScreen === "my_tracks" ? (
+        <MyTracksScreen
+          layout={layout}
+          sections={myTrackSections}
+          previewRevealPrimed={overviewPreviewPrimed}
+          initialScrollOffset={myTracksScrollOffset}
+          onBack={() => {
+            setRootScreen("all_tracks");
+          }}
+          onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
+          onScrollOffsetChange={setMyTracksScrollOffset}
+          onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
+            const savedStack = myTrackSections[sectionIndex]?.[stackIndex];
+            if (!savedStack) return;
+            await prefetchStackAssets(savedStack.projects);
+            setShouldAnimateDetailIntro(true);
+            setReturningFromPlayOptions(false);
+            setSelectedStackIntroRotation(previewRotationDeg ?? 0);
+            setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
+            setSelectedProjects(savedStack.projects);
+            setSelectedStackIndex(null);
+          }}
+        />
+      ) : (
+        <TracksOverviewScreen
+          layout={layout}
+          sections={allTrackSections}
+          previewRevealPrimed={overviewPreviewPrimed}
+          initialScrollOffset={overviewScrollOffset}
+          onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
+          onPressRefresh={() => {
+            void refreshFeed({ preferCache: false, preserveVisibleFeed: true });
+          }}
+          onScrollOffsetChange={setOverviewScrollOffset}
+          onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
+            const sourceStackIndex = allTrackSourceSections[sectionIndex]?.[stackIndex];
+            if (sourceStackIndex == null) return;
+            // Before opening detail, warm the tapped stack so the transition lands on already-ready art.
+            await prefetchStackAssets(activeTrackStacks[sourceStackIndex]?.projects ?? []);
+            setShouldAnimateDetailIntro(true);
+            setReturningFromPlayOptions(false);
+            setSelectedStackIntroRotation(previewRotationDeg ?? 0);
+            setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
+            setSelectedStackIndex(sourceStackIndex);
+            setSelectedProjects(null);
+          }}
+          onPressMyTracks={() => {
+            setMenuOpen(false);
+            setRootScreen("my_tracks");
+          }}
+        />
+      )}
       <GestureDetector gesture={globalBackGesture}>
         <View style={styles.globalBackEdge} />
       </GestureDetector>
