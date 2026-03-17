@@ -108,7 +108,6 @@ async function searchSpotifyTrack(title: string, artistName: string, releaseYear
   url.searchParams.set("q", query);
   url.searchParams.set("type", "track");
   url.searchParams.set("limit", "1");
-  url.searchParams.set("market", "from_token");
 
   const response = await fetch(url.toString(), {
     headers: {
