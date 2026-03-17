@@ -10,17 +10,39 @@ const DAILY_TRACKS_LOCK_KEY = "recordroom:daily-tracks-v1-refresh-lock";
 const DAILY_TRACKS_LOCK_TTL_SECONDS = 60 * 15;
 
 function getRedisConfig() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const rawUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const envToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-  if (!url || !token) {
+  if (!rawUrl) {
     throw new Error(
       "Missing Redis REST credentials. Set KV_REST_API_URL/KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN."
     );
   }
 
+  const parsedUrl = new URL(rawUrl);
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    throw new Error(
+      `Redis REST URL must start with http:// or https://. Received ${parsedUrl.protocol}`
+    );
+  }
+  const tokenFromUrl =
+    parsedUrl.username || parsedUrl.password
+      ? decodeURIComponent(parsedUrl.password || parsedUrl.username)
+      : "";
+
+  parsedUrl.username = "";
+  parsedUrl.password = "";
+
+  const token = envToken || tokenFromUrl;
+
+  if (!token) {
+    throw new Error(
+      "Missing Redis REST token. Set KV_REST_API_TOKEN/UPSTASH_REDIS_REST_TOKEN or include credentials in the Redis REST URL."
+    );
+  }
+
   return {
-    url: url.replace(/\/$/, ""),
+    url: parsedUrl.toString().replace(/\/$/, ""),
     token,
   };
 }

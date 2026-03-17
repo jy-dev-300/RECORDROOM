@@ -5,7 +5,6 @@ import {
   prefetchTrackArtworkCache,
   saveDailyTracksPayload,
 } from "./deviceTrackCache";
-import { fetchRandomMusicBrainzTracks } from "./musicBrainzRandomTracks";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type RandomTracksResponse = {
@@ -35,25 +34,8 @@ function getApiUrl(path: string) {
   return `${config.api.baseUrl.replace(/\/$/, "")}${path}`;
 }
 
-function shouldUseDirectMusicBrainzFetch() {
-  const baseUrl = config.api.baseUrl.trim();
-  if (!baseUrl) {
-    return true;
-  }
-
-  return /:8081(?:\/|$)/.test(baseUrl);
-}
-
 export async function fetchRandomTracks() {
   await clearTrackCache();
-
-  if (shouldUseDirectMusicBrainzFetch()) {
-    const tracks = (await fetchRandomMusicBrainzTracks()).filter(hasArtwork);
-    return {
-      tracks,
-      tracksById: new Map(tracks.map((track) => [track.id, track])),
-    };
-  }
 
   const response = await fetch(getApiUrl("/api/musicbrainz/random-tracks"));
 

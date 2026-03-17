@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import dotenv from "dotenv";
 
 const MUSICBRAINZ_API_BASE = "https://musicbrainz.org/ws/2";
 const COVER_ART_ARCHIVE_BASE = "https://coverartarchive.org";
@@ -14,6 +15,8 @@ const MAX_ARTIST_TRACKS = 2;
 const ROOT_DIR = process.cwd();
 const GENERATED_DIR = path.join(ROOT_DIR, "generated");
 const ARTWORK_DIR = path.join(GENERATED_DIR, "track-artwork");
+
+dotenv.config({ path: path.join(ROOT_DIR, ".env.local") });
 
 let lastMusicBrainzRequestAt = 0;
 
