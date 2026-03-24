@@ -1,60 +1,195 @@
-import { Pressable, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useEffect, useMemo, useRef } from "react";
+import { Alert, Animated, Easing, Pressable, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Image as ExpoImage } from "expo-image";
+import ReanimatedAnimated, {
+  SensorType,
+  useAnimatedReaction,
+  useAnimatedSensor,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import type { Stack } from "../components/Stack";
-import HorizontalOrbitCarouselRow from "../components/HorizontalOrbitCarouselRow";
+import PlayerDisc from "../components/PlayerDisc";
 
 type GiftCreationPageProps = {
   projects: Stack[];
+  giftMessage: string;
+  onPressComposeMessage: () => void;
 };
 
-type GiftPlaceholderItem = {
-  id: string;
-  color: string;
-};
-
-const GIFT_ROW_GAP = 3;
-const GIFT_ROW_VERTICAL_CURVE = 58;
-
-function buildPlaceholderItems(projects: Stack[], rowIndex: number): GiftPlaceholderItem[] {
-  const palette =
-    projects.length > 0
-      ? projects.map((project, index) => ({
-          id: `${project.id}-gift-${rowIndex}-${index}`,
-          color: project.color,
-        }))
-      : [
-          { id: `gift-${rowIndex}-0`, color: "#D94F3D" },
-          { id: `gift-${rowIndex}-1`, color: "#E7A93C" },
-          { id: `gift-${rowIndex}-2`, color: "#5E8B7E" },
-          { id: `gift-${rowIndex}-3`, color: "#2D5B87" },
-          { id: `gift-${rowIndex}-4`, color: "#A86B4C" },
-        ];
-
-  return palette.map((item, index) => ({
-    ...item,
-    id: `${item.id}-${index}`,
-  }));
-}
-
-export default function GiftCreationPage({ projects }: GiftCreationPageProps) {
-  const rows = [0, 1, 2];
+const PLASTIC_WRAP_SOURCE = require("../assets/bestplastic.png");
+export default function GiftCreationPage({
+  projects,
+  giftMessage,
+  onPressComposeMessage,
+}: GiftCreationPageProps) {
   const giftLink = "https://recordroom.app/gift";
-  const { height } = useWindowDimensions();
-  const upwardShift = height * 0.08;
+  const { width, height } = useWindowDimensions();
+  const activeProject = projects[0] ?? null;
+  const artworkSource = activeProject?.media ? { uri: activeProject.media } : null;
+  const discProgress = useRef(new Animated.Value(0)).current;
+  const wrapProgress = useRef(new Animated.Value(0)).current;
+  const idleFloat = useRef(new Animated.Value(0)).current;
+  const idleDrift = useRef(new Animated.Value(0)).current;
+  const previewDidScrollRef = useRef(false);
+  const gravity = useAnimatedSensor(SensorType.GRAVITY, { interval: 20 });
+  const tiltX = useSharedValue(0);
+  const tiltY = useSharedValue(0);
 
-  const handleCopyLink = async () => {
-    try {
-      await Share.share({
-        message: giftLink,
-      });
-    } catch {
-      // Ignore dismissed or failed share attempts for now.
-    }
+  useEffect(() => {
+    discProgress.setValue(0);
+    wrapProgress.setValue(0);
+    idleFloat.setValue(0);
+    idleDrift.setValue(0);
+
+    Animated.sequence([
+      Animated.timing(discProgress, {
+        toValue: 1,
+        duration: 950,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(wrapProgress, {
+        toValue: 1,
+        duration: 760,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      Animated.parallel([
+        Animated.loop(
+        Animated.sequence([
+          Animated.timing(idleFloat, {
+            toValue: 1,
+            duration: 2200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(idleFloat, {
+            toValue: 0,
+            duration: 2400,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+        ),
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(idleDrift, {
+              toValue: 1,
+              duration: 2900,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(idleDrift, {
+              toValue: 0,
+              duration: 2700,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ])
+        ),
+      ]).start();
+    });
+  }, [discProgress, wrapProgress, idleDrift, idleFloat, activeProject?.id]);
+
+  const sleeveSize = Math.min(width * 0.5566, 319);
+  const discSize = sleeveSize * 0.99;
+  const sceneHeight = sleeveSize * 1.18;
+  const upwardShift = height * -0.015;
+
+  const discTranslateX = useMemo(
+    () =>
+      discProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [sleeveSize * 0.63, 0],
+      }),
+    [discProgress, sleeveSize]
+  );
+
+  const sleeveTranslateX = useMemo(
+    () =>
+      discProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-sleeveSize * 0.31, 0],
+      }),
+    [discProgress, sleeveSize]
+  );
+
+  const wrapWidth = useMemo(
+    () =>
+      wrapProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, sleeveSize],
+      }),
+    [sleeveSize, wrapProgress]
+  );
+
+  const idleSceneStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          translateY: idleFloat.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.5, -3],
+          }),
+        },
+        {
+          translateX: idleDrift.interpolate({
+            inputRange: [0, 1],
+            outputRange: [-1.5, 2],
+          }),
+        },
+        {
+          rotate: idleFloat.interpolate({
+            inputRange: [0, 1],
+            outputRange: ["-0.35deg", "0.35deg"],
+          }),
+        },
+        {
+          rotate: idleDrift.interpolate({
+            inputRange: [0, 1],
+            outputRange: ["0.08deg", "-0.12deg"],
+          }),
+        },
+      ],
+    }),
+    [idleDrift, idleFloat]
+  );
+
+  useAnimatedReaction(
+    () => ({
+      x: gravity.sensor.value.x ?? 0,
+      y: gravity.sensor.value.y ?? 0,
+    }),
+    (value) => {
+      const clampedX = Math.max(-7, Math.min(7, value.x));
+      const clampedY = Math.max(-7, Math.min(7, value.y));
+      tiltX.value = clampedX * 4.8;
+      const verticalStrength = clampedY > 0 ? 7.8 : 3.2;
+      tiltY.value = clampedY * -verticalStrength;
+    },
+    [gravity, tiltX, tiltY]
+  );
+
+  const tiltSceneStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: tiltX.value },
+      { translateY: tiltY.value },
+    ],
+  }));
+
+  const handleCopyLink = () => {
+    Alert.alert("Gift link copied \u2713 \uD83E\uDD1D");
   };
 
   const handleShare = async () => {
+    const trimmedMessage = giftMessage.trim();
+    const shareMessage = trimmedMessage ? `${trimmedMessage}\n\n${giftLink}` : giftLink;
+
     try {
       await Share.share({
-        message: giftLink,
+        message: shareMessage,
       });
     } catch {
       // Ignore dismissed or failed share attempts for now.
@@ -64,36 +199,117 @@ export default function GiftCreationPage({ projects }: GiftCreationPageProps) {
   return (
     <View style={styles.page}>
       <View style={[styles.content, { transform: [{ translateY: -upwardShift }] }]}>
-        <View style={styles.rows}>
-          {rows.map((rowIndex) => {
-            const items = buildPlaceholderItems(projects, rowIndex);
-            return (
-              <HorizontalOrbitCarouselRow
-              key={`gift-row-${rowIndex}`}
-              data={items}
-              initialIndex={rowIndex % Math.max(items.length, 1)}
-              verticalDirection="up"
-              verticalCurve={GIFT_ROW_VERTICAL_CURVE}
-              itemWidth={184}
-              itemHeight={118}
-              itemSpacing={126}
-                visibleSideCount={3}
-                sideScale={0.4}
-                sideOpacity={0.08}
-                style={styles.row}
-                renderItem={({ item }) => <View style={[styles.placeholderCard, { backgroundColor: item.color }]} />}
-              />
-            );
-          })}
+        <View style={styles.infoDock}>
+          <Text numberOfLines={1} style={styles.trackTitle}>
+            {activeProject?.title ?? "Track"}
+          </Text>
+          <Text numberOfLines={1} style={styles.trackMeta}>
+            <Text style={styles.metaLabel}>by </Text>
+            {activeProject?.artistName ?? "Unknown Artist"}
+          </Text>
+          {activeProject?.releaseYear != null ? (
+            <Text style={styles.trackMeta}>{String(activeProject.releaseYear)}</Text>
+          ) : null}
         </View>
-      <View style={styles.actionRow}>
-        <Pressable onPress={handleCopyLink} style={styles.iconButton}>
-          <Text style={styles.iconGlyph}>{"\uD83D\uDD17"}</Text>
-        </Pressable>
-        <Pressable onPress={handleShare} style={styles.iconButton}>
-          <Text style={styles.iconGlyph}>{"\u2934"}</Text>
-        </Pressable>
-      </View>
+        <ReanimatedAnimated.View style={tiltSceneStyle}>
+          <Animated.View style={[styles.scene, { width: sleeveSize * 1.52, height: sceneHeight }, idleSceneStyle]}>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.discStage,
+                {
+                  width: discSize,
+                  height: discSize,
+                  transform: [{ translateX: discTranslateX }],
+                },
+              ]}
+            >
+              <PlayerDisc
+                artworkSource={artworkSource}
+                size={discSize}
+                squashRatio={1}
+                style={styles.discWrap}
+                tiltDeg="0deg"
+              />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.sleeveStage,
+                {
+                  width: sleeveSize,
+                  height: sleeveSize,
+                  borderRadius: Math.round(sleeveSize * 0.02),
+                  transform: [{ translateX: sleeveTranslateX }],
+                },
+              ]}
+            >
+              {artworkSource ? (
+                <ExpoImage
+                  cachePolicy="memory-disk"
+                  contentFit="cover"
+                  source={artworkSource}
+                  style={styles.sleeveArt}
+                  transition={0}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.sleeveFallback,
+                    { backgroundColor: activeProject?.color ?? "#E7E7E7" },
+                  ]}
+                />
+              )}
+              <Animated.View style={[styles.plasticReveal, { width: wrapWidth }]}>
+                <ExpoImage
+                  contentFit="cover"
+                  source={PLASTIC_WRAP_SOURCE}
+                  style={styles.plasticWrap}
+                  transition={0}
+                />
+              </Animated.View>
+            </Animated.View>
+          </Animated.View>
+        </ReanimatedAnimated.View>
+
+        <View style={styles.messageDock}>
+          <View style={styles.messageCard}>
+            <ScrollView
+              nestedScrollEnabled
+              onScrollBeginDrag={() => {
+                previewDidScrollRef.current = true;
+              }}
+              onTouchEnd={() => {
+                if (!previewDidScrollRef.current) {
+                  onPressComposeMessage();
+                }
+              }}
+              onTouchStart={() => {
+                previewDidScrollRef.current = false;
+              }}
+              showsVerticalScrollIndicator={giftMessage.trim().length > 0}
+              style={styles.messagePreviewScroll}
+            >
+              <Text
+                style={[
+                  styles.messagePreview,
+                  !giftMessage.trim() ? styles.messagePreviewPlaceholder : null,
+                ]}
+              >
+                {giftMessage.trim() || "Write a message to send along with this track."}
+              </Text>
+            </ScrollView>
+          </View>
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable onPress={handleCopyLink} style={styles.iconButton}>
+            <Text style={styles.iconGlyph}>{"\uD83D\uDD17"}</Text>
+          </Pressable>
+          <Pressable onPress={handleShare} style={styles.iconButton}>
+            <Text style={styles.iconGlyph}>{"\u2934"}</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -103,31 +319,105 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: "#FEFEFE",
-    justifyContent: "flex-start",
   },
   content: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  rows: {
+  infoDock: {
     width: "100%",
-    gap: GIFT_ROW_GAP,
-    paddingTop: 116,
-    paddingBottom: 0,
-  },
-  row: {
+    maxWidth: 320,
     alignSelf: "center",
+    marginBottom: -12,
+    alignItems: "center",
   },
-  placeholderCard: {
-    flex: 1,
-    borderRadius: 14,
+  scene: {
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+  },
+  messageDock: {
+    width: "100%",
+    maxWidth: 320,
+    marginTop: 33,
+  },
+  messageCard: {
+    minHeight: 92,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
+    borderColor: "rgba(17,17,17,0.12)",
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    color: "#111111",
+  },
+  messagePreviewScroll: {
+    maxHeight: 72,
+  },
+  messagePreview: {
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  messagePreviewPlaceholder: {
+    color: "rgba(17,17,17,0.42)",
+  },
+  discStage: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+    shadowColor: "#000000",
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 11,
+  },
+  discWrap: {},
+  sleeveStage: {
+    overflow: "hidden",
+    backgroundColor: "#F6F6F6",
+    borderWidth: 1,
+    borderColor: "rgba(17,17,17,0.08)",
+    zIndex: 3,
+    shadowColor: "#000000",
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  sleeveArt: {
+    position: "absolute",
+    top: -1,
+    right: -1,
+    bottom: -1,
+    left: -1,
+  },
+  sleeveFallback: {
+    width: "100%",
+    height: "100%",
+  },
+  plasticReveal: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    overflow: "hidden",
+  },
+  plasticWrap: {
+    width: "100%",
+    height: "100%",
+    opacity: 0.9,
   },
   actionRow: {
     flexDirection: "row",
     alignSelf: "center",
     gap: 16,
-    marginTop: GIFT_ROW_GAP + GIFT_ROW_VERTICAL_CURVE,
+    marginTop: 40,
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
   },
   iconButton: {
     width: 52,
@@ -142,5 +432,22 @@ const styles = StyleSheet.create({
     color: "#111111",
     fontSize: 21,
     lineHeight: 24,
+  },
+  trackTitle: {
+    color: "#111111",
+    fontSize: 22,
+    fontWeight: "600",
+    textAlign: "center",
+    maxWidth: "100%",
+  },
+  trackMeta: {
+    marginTop: 4,
+    color: "rgba(17,17,17,0.72)",
+    fontSize: 14,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  metaLabel: {
+    fontStyle: "italic",
   },
 });

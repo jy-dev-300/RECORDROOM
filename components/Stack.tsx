@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   Image,
@@ -7,6 +7,10 @@ import {
   View,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
+import Animated, {
+  type SharedValue,
+  useAnimatedStyle,
+} from "react-native-reanimated";
 
 export type Stack = {
   id: string;
@@ -27,9 +31,11 @@ type StackProps = {
   focusIndex?: number | null;
   onActiveIndexChange?: (index: number) => void;
   stackWidthOverride?: number;
+  tiltX?: SharedValue<number>;
+  tiltY?: SharedValue<number>;
 };
 
-const STRIP = 24;
+export const STACK_LAYER_OFFSET = 24;
 const STACK_EASE = 0.12;
 const STACK_TOUCH_EASE = 0.07;
 const SNAP_EPSILON = 0.0009;
@@ -78,8 +84,111 @@ function getIncomingCardOpacity() {
   return 1;
 }
 
-function getVisibleDepth(projectCount: number) {
+export function getVisibleDepth(projectCount: number) {
   return clamp(projectCount - 1, 0, 4);
+}
+
+function StackLayerShell({
+  cardHeight,
+  clipFromTop,
+  depthFactor,
+  failedMediaMap,
+  messy,
+  opacity,
+  project,
+  scale,
+  setFailedMediaMap,
+  tiltX,
+  tiltY,
+  ty,
+  zIndex,
+}: {
+  cardHeight: number;
+  clipFromTop: number;
+  depthFactor: number;
+  failedMediaMap: Record<string, boolean>;
+  messy: { x: number; y: number; rotate: number };
+  opacity: number;
+  project: Stack;
+  scale: number;
+  setFailedMediaMap: Dispatch<SetStateAction<Record<string, boolean>>>;
+  tiltX?: SharedValue<number>;
+  tiltY?: SharedValue<number>;
+  ty: number;
+  zIndex: number;
+}) {
+  const cardMessStyle = useAnimatedStyle(() => {
+    const driftX = tiltX?.value ?? 0;
+    const driftY = tiltY?.value ?? 0;
+    const horizontalStrength = Math.min(1, Math.abs(driftX) / 12) * depthFactor;
+    const verticalStrength = Math.min(1, Math.abs(driftY) / 12) * depthFactor;
+
+    return {
+      transform: [
+        { translateX: driftX * depthFactor + messy.x * horizontalStrength },
+        { translateY: driftY * depthFactor + messy.y * verticalStrength },
+        { rotate: `${messy.rotate * verticalStrength}deg` },
+      ],
+    };
+  }, [depthFactor, messy, tiltX, tiltY]);
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        StyleSheet.absoluteFillObject,
+        {
+          zIndex,
+          opacity,
+          transform: [{ translateY: ty }, { scale }],
+        },
+      ]}
+    >
+      <Animated.View style={[StyleSheet.absoluteFillObject, cardMessStyle]}>
+        <View style={[StyleSheet.absoluteFillObject, styles.clipBoundary]}>
+          <View
+            style={[
+              styles.clipWindow,
+              { top: clipFromTop },
+            ]}
+          >
+            <View
+              style={[
+                styles.clipContent,
+                { top: -clipFromTop, height: cardHeight },
+              ]}
+            >
+              <View style={StyleSheet.absoluteFillObject}>
+                {project.type === "image" && project.media ? (
+                  <ExpoImage
+                    cachePolicy="memory-disk"
+                    contentFit="cover"
+                    onError={() => {
+                      if (project.previewFallback && project.previewFallback !== project.media) {
+                        setFailedMediaMap((current) =>
+                          current[project.id] ? current : { ...current, [project.id]: true }
+                        );
+                      }
+                    }}
+                    source={{
+                      uri:
+                        failedMediaMap[project.id] && project.previewFallback
+                          ? project.previewFallback
+                          : project.media,
+                    }}
+                    style={styles.mediaFill}
+                    transition={0}
+                  />
+                ) : (
+                  <View style={styles.transparentSurface} />
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
+      </Animated.View>
+    </View>
+  );
 }
 
 export default function Stack({
@@ -87,6 +196,8 @@ export default function Stack({
   focusIndex,
   onActiveIndexChange,
   stackWidthOverride,
+  tiltX,
+  tiltY,
 }: StackProps) {
   const renderProjects = useMemo(
     () => projects.filter((project) => project.type !== "image" || project.media.trim().length > 0),
@@ -267,10 +378,12 @@ export default function Stack({
     return <View style={styles.outer} />;
   }
 
+  const panHandlers = N > 1 ? panResponder.panHandlers : undefined;
+
   return (
     <View style={styles.outer}>
       <View
-        {...panResponder.panHandlers}
+        {...panHandlers}
         style={[
           styles.stack,
           {
@@ -298,7 +411,7 @@ export default function Stack({
             clipFromTop = 0;
           } else if (rel >= 0) {
             scale = 1;
-            const tyStrip = -(rel * STRIP);
+            const tyStrip = -(rel * STACK_LAYER_OFFSET);
             ty = tyStrip - (cardHeight / 2) * (1 - scale);
             opacity = getIncomingCardOpacity();
             clipFromTop = 0;
@@ -316,7 +429,7 @@ export default function Stack({
               const wrappedRel = N + rel;
               const backRel = Math.min(wrappedRel, visibleDepth + 1);
               const backScale = 1;
-              const backTyStrip = -(backRel * STRIP);
+              const backTyStrip = -(backRel * STACK_LAYER_OFFSET);
               const backTy = backTyStrip - (cardHeight / 2) * (1 - backScale);
 
               ty = backTy * tFast;
@@ -335,77 +448,26 @@ export default function Stack({
                 : 220
               : Math.round(100 - absRel * 10);
 
-          const _messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
-          void _messy;
+          const messy = messyOffsets[index] ?? { x: 0, y: 0, rotate: 0 };
+          const depthFactor = Math.max(0.38, 1 - absRel * 0.16);
 
           return (
-            <View
+            <StackLayerShell
+              cardHeight={cardHeight}
+              clipFromTop={clipFromTop}
+              depthFactor={depthFactor}
+              failedMediaMap={failedMediaMap}
               key={project.id}
-              pointerEvents="none"
-              style={[
-                StyleSheet.absoluteFillObject,
-                {
-                  zIndex,
-                  opacity,
-                  transform: [{ translateY: ty }, { scale }],
-                },
-              ]}
-            >
-              <View
-                style={[
-                  StyleSheet.absoluteFillObject,
-                  {
-                    transform: [
-                      { translateX: 0 },
-                      { translateY: 0 },
-                      { rotate: "0deg" },
-                    ],
-                  },
-                ]}
-              >
-                <View style={[StyleSheet.absoluteFillObject, styles.clipBoundary]}>
-                  <View
-                    style={[
-                      styles.clipWindow,
-                      { top: clipFromTop },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.clipContent,
-                        { top: -clipFromTop, height: cardHeight },
-                      ]}
-                    >
-                      <View style={StyleSheet.absoluteFillObject}>
-                        {project.type === "image" && project.media ? (
-                          <ExpoImage
-                            cachePolicy="memory-disk"
-                            contentFit="cover"
-                            onError={() => {
-                              if (project.previewFallback && project.previewFallback !== project.media) {
-                                setFailedMediaMap((current) =>
-                                  current[project.id] ? current : { ...current, [project.id]: true }
-                                );
-                              }
-                            }}
-                            source={{
-                              uri:
-                                failedMediaMap[project.id] && project.previewFallback
-                                  ? project.previewFallback
-                                  : project.media,
-                            }}
-                            style={styles.mediaFill}
-                            transition={0}
-                          />
-                        ) : (
-                          <View style={styles.transparentSurface} />
-                        )}
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            </View>
+              messy={messy}
+              opacity={opacity}
+              project={project}
+              scale={scale}
+              setFailedMediaMap={setFailedMediaMap}
+              tiltX={tiltX}
+              tiltY={tiltY}
+              ty={ty}
+              zIndex={zIndex}
+            />
           );
         })}
       </View>
@@ -440,7 +502,11 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
   mediaFill: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: -1,
+    right: -1,
+    bottom: -1,
+    left: -1,
   },
   transparentSurface: {
     ...StyleSheet.absoluteFillObject,

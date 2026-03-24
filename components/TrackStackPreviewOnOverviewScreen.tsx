@@ -179,6 +179,8 @@ type TrackStackPreviewOnOverviewScreenProps = {
   viewportWidth: number;
   viewportHeight: number;
   scrollY: SharedValue<number>;
+  tiltX: SharedValue<number>;
+  tiltY: SharedValue<number>;
   straightenProgress?: SharedValue<number>;
   revealFrontLayers?: boolean;
   showDeferredLayers?: boolean;
@@ -190,6 +192,8 @@ function PreviewLayerShell({
   rel,
   jitter,
   zIndex,
+  tiltX,
+  tiltY,
   straightenProgress,
   children,
 }: {
@@ -197,22 +201,25 @@ function PreviewLayerShell({
   rel: number;
   jitter: { x: number; y: number; rotate: number };
   zIndex: number;
+  tiltX: SharedValue<number>;
+  tiltY: SharedValue<number>;
   straightenProgress?: SharedValue<number>;
   children: React.ReactNode;
 }) {
   const baseTranslateY = -getPreviewStackOffset(size, rel);
+  const depthFactor = Math.max(0.38, 1 - rel * 0.16);
   const layerStyle = useAnimatedStyle(() => {
     const progress = straightenProgress?.value ?? 0;
     const remaining = 1 - progress;
 
     return {
       transform: [
-        { translateX: jitter.x * remaining },
-        { translateY: baseTranslateY + jitter.y },
+        { translateX: jitter.x * remaining + tiltX.value * depthFactor },
+        { translateY: baseTranslateY + jitter.y + tiltY.value * depthFactor },
         { rotate: `${jitter.rotate * remaining}deg` },
       ],
     };
-  }, [baseTranslateY, jitter, straightenProgress]);
+  }, [baseTranslateY, depthFactor, jitter, straightenProgress, tiltX, tiltY]);
 
   return (
     <Animated.View
@@ -387,6 +394,8 @@ function TrackStackPreviewOnOverviewScreen({
   viewportWidth,
   viewportHeight,
   scrollY,
+  tiltX,
+  tiltY,
   straightenProgress,
   revealFrontLayers = true,
   showDeferredLayers = true,
@@ -398,6 +407,7 @@ function TrackStackPreviewOnOverviewScreen({
   const frontLayerReportedRef = useRef(false);
   const stackParallaxVariance = useRef(getStackParallaxVariance(stack.id)).current;
   const stackParallaxXBias = useRef(getStackParallaxXBias(stack.id)).current;
+  const stackBaseZIndex = Math.round(stackTop + stackHeight) * 10;
 
   useEffect(() => {
     frontLayerReportedRef.current = false;
@@ -436,7 +446,9 @@ function TrackStackPreviewOnOverviewScreen({
               size={size}
               rel={rel}
               jitter={jitter}
-              zIndex={10 - rel}
+              zIndex={stackBaseZIndex - rel}
+              tiltX={tiltX}
+              tiltY={tiltY}
               straightenProgress={straightenProgress}
             >
               {project.thumbnail || project.media ? (
@@ -489,7 +501,11 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   previewImage: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: -1,
+    right: -1,
+    bottom: -1,
+    left: -1,
   },
   previewImageMotion: {
     ...StyleSheet.absoluteFillObject,

@@ -8,7 +8,19 @@ import {
   View,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
-import StackComponent, { type Stack } from "../components/Stack";
+import ReanimatedAnimated, {
+  SensorType,
+  useAnimatedReaction,
+  useAnimatedSensor,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
+import StackComponent, {
+  getVisibleDepth,
+  STACK_LAYER_OFFSET,
+  type Stack,
+} from "../components/Stack";
+import SpotifyEmbedBridge from "../components/SpotifyEmbedBridge";
 import {
   DISC_LABEL_SIZE_RATIO,
   DISC_SIZE_RATIO,
@@ -17,10 +29,18 @@ import {
 } from "../components/disc";
 import MusicPlayControlBar from "../components/MusicPlayControlBar";
 import Tonearm from "../components/Tonearm";
+import {
+  fetchSpotifyTrackMatch,
+  type SpotifyTrackMatch,
+} from "../services/spotifyTrackPreviewService";
 
 type PlayScreenProps = {
   projects: Stack[];
   initialProjectIndex?: number;
+  onPressGift?: (project: Stack) => void;
+  onPressSave?: (project: Stack) => void;
+  onPressRemove?: (project: Stack) => void;
+  savedTrackIds?: Record<string, boolean>;
 };
 
 const PLAYER_SIZE = 360;
@@ -31,21 +51,40 @@ const CUSTOM_PLAYER_SOURCE = require("../assets/player.jpeg");
 const VINYL_DISC_SOURCE = require("../assets/vinyl2.png");
 const TOP_STYLE_PLAY = { top: "59.5%", right: "4.9%", transform: [{ rotate: "-5deg" }] } as const;
 const TOP_STYLE_PAUSE = { top: "50%", right: "8%", transform: [{ rotate: "10deg" }] } as const;
+const STACK_REST_TRANSLATE_Y = -19.5;
+const FULL_FOUR_TRACK_STACK_DEPTH = 3;
 
 export default function PlayScreen({
   projects,
   initialProjectIndex = 0,
+  onPressGift,
+  onPressSave,
+  onPressRemove,
+  savedTrackIds,
 }: PlayScreenProps) {
   const { height } = useWindowDimensions();
+  const playableProjects = useMemo(
+    () => projects.filter((project) => project.type !== "image" || project.media.trim().length > 0),
+    [projects]
+  );
   const [activeIndex, setActiveIndex] = useState(initialProjectIndex);
-  const activeProject = projects[activeIndex] ?? projects[initialProjectIndex] ?? null;
+  const activeProject =
+    playableProjects[activeIndex] ?? playableProjects[initialProjectIndex] ?? null;
+  const activeProjectIsSaved = activeProject ? savedTrackIds?.[activeProject.id] === true : false;
   const artworkSource = activeProject?.media ? { uri: activeProject.media } : null;
+  const [spotifyMatch, setSpotifyMatch] = useState<SpotifyTrackMatch | null>(null);
+  const [spotifyMatchProjectId, setSpotifyMatchProjectId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSeconds, setPlaybackSeconds] = useState(0);
   const playbackSecondsRef = useRef(0);
   const discRotationRef = useRef(0);
   const discRotationValue = useRef(new Animated.Value(0)).current;
   const tonearmTopProgress = useRef(new Animated.Value(0)).current;
+  const gravity = useAnimatedSensor(SensorType.GRAVITY, { interval: 20 });
+  const stackTiltX = useSharedValue(0);
+  const stackTiltY = useSharedValue(0);
+  const stackMessX = useSharedValue(0);
+  const stackMessY = useSharedValue(0);
 
   const applyPlaybackSeconds = (seconds: number) => {
     playbackSecondsRef.current = seconds;
@@ -89,6 +128,49 @@ export default function PlayScreen({
     setActiveIndex(initialProjectIndex);
   }, [initialProjectIndex]);
 
+  useEffect(() => {
+    setIsPlaying(false);
+    applyPlaybackSeconds(0);
+    setDiscRotation(0);
+  }, [activeProject?.id]);
+
+  const handleTogglePlayback = async () => {
+    if (playbackSecondsRef.current >= PLAYBACK_DURATION_SECONDS) {
+      applyPlaybackSeconds(0);
+      setDiscRotation(0);
+    }
+
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
+    }
+
+    if (!activeProject?.title) {
+      setIsPlaying(true);
+      return;
+    }
+
+    if (spotifyMatchProjectId === activeProject.id) {
+      setIsPlaying(Boolean(spotifyMatch?.uri));
+      return;
+    }
+
+    try {
+      const match = await fetchSpotifyTrackMatch({
+        title: activeProject.title,
+        artistName: activeProject.artistName,
+        releaseYear: activeProject.releaseYear,
+      });
+      setSpotifyMatch(match);
+      setSpotifyMatchProjectId(activeProject.id);
+      setIsPlaying(Boolean(match?.uri));
+    } catch {
+      setSpotifyMatch(null);
+      setSpotifyMatchProjectId(activeProject.id);
+      setIsPlaying(false);
+    }
+  };
+
   const discSpinStyle = useMemo(
     () => ({
       transform: [
@@ -128,6 +210,10 @@ export default function PlayScreen({
     [tonearmTopProgress]
   );
 
+  const stackVisibleDepth = getVisibleDepth(playableProjects.length);
+  const shallowStackLift =
+    Math.max(0, FULL_FOUR_TRACK_STACK_DEPTH - stackVisibleDepth) * STACK_LAYER_OFFSET;
+
   const contentShiftStyle = useMemo(
     () => ({
       transform: [{ translateY: height * 0.05 }],
@@ -135,8 +221,40 @@ export default function PlayScreen({
     [height]
   );
 
+  useAnimatedReaction(
+    () => ({
+      x: gravity.sensor.value.x ?? 0,
+      y: gravity.sensor.value.y ?? 0,
+    }),
+    (value) => {
+      const clampedX = Math.max(-7, Math.min(7, value.x));
+      const clampedY = Math.max(-7, Math.min(7, value.y));
+      const uprightDeadZone = 1.1;
+      const upsideDownAmount = Math.max(0, clampedY - uprightDeadZone);
+      const horizontalStrength = 1.35 + upsideDownAmount * 0.1;
+
+      stackTiltX.value = clampedX * horizontalStrength;
+      stackTiltY.value = upsideDownAmount * -2.7;
+      stackMessX.value = clampedX * upsideDownAmount * 0.55;
+      stackMessY.value = upsideDownAmount * -5.2;
+    },
+    [gravity, stackMessX, stackMessY, stackTiltX, stackTiltY]
+  );
+
+  const stackTiltStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: stackTiltX.value },
+      { translateY: STACK_REST_TRANSLATE_Y + stackTiltY.value },
+    ],
+  }));
+
   return (
     <View style={styles.page}>
+      <SpotifyEmbedBridge
+        debugVisible
+        shouldPlay={isPlaying && Boolean(spotifyMatch?.uri)}
+        spotifyUri={spotifyMatch?.uri ?? null}
+      />
       <View style={[styles.contentShiftWrap, contentShiftStyle]}>
         <View style={styles.infoDock}>
           <Text numberOfLines={1} style={styles.trackTitle}>
@@ -150,15 +268,17 @@ export default function PlayScreen({
             <Text style={styles.trackMeta}>{String(activeProject.releaseYear)}</Text>
           ) : null}
         </View>
-        <View style={styles.heroStage}>
-          <View style={styles.stackDock}>
+        <View style={[styles.heroStage, { transform: [{ translateY: -shallowStackLift }] }]}>
+          <ReanimatedAnimated.View style={[styles.stackDock, stackTiltStyle]}>
             <StackComponent
-              projects={projects}
+              projects={playableProjects}
               focusIndex={activeIndex}
               onActiveIndexChange={setActiveIndex}
               stackWidthOverride={236}
+              tiltX={stackMessX}
+              tiltY={stackMessY}
             />
-          </View>
+          </ReanimatedAnimated.View>
 
           <View style={styles.playerDock}>
             <View style={styles.playerTiltWrap}>
@@ -228,7 +348,7 @@ export default function PlayScreen({
           </View>
         </View>
 
-        <View style={styles.transportDock}>
+        <View style={[styles.transportDock, { transform: [{ translateY: -140 - shallowStackLift }] }]}>
           <View style={styles.transportWrap}>
             <MusicPlayControlBar
               currentSeconds={playbackSeconds}
@@ -239,17 +359,45 @@ export default function PlayScreen({
                 setDiscRotation(discRotationRef.current + delta * DISC_DEGREES_PER_SECOND);
               }}
               onTogglePlay={() => {
-                if (playbackSecondsRef.current >= PLAYBACK_DURATION_SECONDS) {
-                  applyPlaybackSeconds(0);
-                  setDiscRotation(0);
-                  setIsPlaying(true);
-                  return;
-                }
-
-                setIsPlaying((current) => !current);
+                void handleTogglePlayback();
               }}
+              showPlayButton={false}
               totalSeconds={PLAYBACK_DURATION_SECONDS}
             />
+            <View style={styles.actionRow}>
+              <Text
+                onPress={() => {
+                  if (activeProject) {
+                    if (activeProjectIsSaved) {
+                      onPressRemove?.(activeProject);
+                    } else {
+                      onPressSave?.(activeProject);
+                    }
+                  }
+                }}
+                style={styles.transportActionText}
+              >
+                {activeProjectIsSaved ? "-" : "+"}
+              </Text>
+              <Text
+                onPress={() => {
+                  void handleTogglePlayback();
+                }}
+                style={styles.transportActionText}
+              >
+                {isPlaying ? "II" : "\u25B6"}
+              </Text>
+              <Text
+                onPress={() => {
+                  if (activeProject) {
+                    onPressGift?.(activeProject);
+                  }
+                }}
+                style={styles.transportActionText}
+              >
+                {"\uD83C\uDF81"}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -383,8 +531,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   customDiscLabelArtwork: {
-    width: "100%",
-    height: "100%",
+    width: "101.5%",
+    height: "101.5%",
   },
   stackDock: {
     position: "absolute",
@@ -400,7 +548,6 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
     elevation: 12,
-    transform: [{ translateY: -19.3 }],
   },
   playerTiltWrap: {
     width: 420,
@@ -450,5 +597,19 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
     zIndex: 20,
+  },
+  actionRow: {
+    marginTop: 12,
+    width: 164,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  transportActionText: {
+    minWidth: 32,
+    color: "#111111",
+    fontSize: 18,
+    fontWeight: "500",
+    textAlign: "center",
   },
 });

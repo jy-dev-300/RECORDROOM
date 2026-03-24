@@ -1,4 +1,4 @@
-import * as FileSystem from "../node_modules/expo/node_modules/expo-file-system/legacy";
+import * as FileSystem from "expo-file-system/legacy";
 import type { SpotifyTrackMatch } from "./spotifyTrackPreviewService";
 
 type SpotifyPreviewCachePayload = {

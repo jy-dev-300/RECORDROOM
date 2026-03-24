@@ -6,9 +6,15 @@ import TracksOverviewScreen from "./TracksOverviewScreen";
 type MyTracksScreenProps = {
   layout: TrackWorldLayout;
   sections: TrackStack[][];
+  accountLabel?: string;
   previewRevealPrimed?: boolean;
   initialScrollOffset?: number;
   onBack: () => void;
+  sortOptions?: Array<{
+    id: string;
+    label: string;
+    onPress: () => void;
+  }>;
   onPreviewRevealPrimed?: () => void;
   onScrollOffsetChange?: (offset: number) => void;
   onPressStack: (
@@ -22,9 +28,11 @@ type MyTracksScreenProps = {
 export default function MyTracksScreen({
   layout,
   sections,
+  accountLabel,
   previewRevealPrimed = false,
   initialScrollOffset = 0,
   onBack,
+  sortOptions,
   onPreviewRevealPrimed,
   onScrollOffsetChange,
   onPressStack,
@@ -33,10 +41,12 @@ export default function MyTracksScreen({
     <TracksOverviewScreen
       layout={layout}
       sections={sections}
+      accountLabel={accountLabel}
       previewRevealPrimed={previewRevealPrimed}
       isMyTracksView
       onBack={onBack}
       initialScrollOffset={initialScrollOffset}
+      sortOptions={sortOptions}
       onPreviewRevealPrimed={onPreviewRevealPrimed}
       onScrollOffsetChange={onScrollOffsetChange}
       onPressStack={onPressStack}

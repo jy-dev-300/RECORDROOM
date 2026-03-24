@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Animated, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Alert, Animated, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,10 +19,12 @@ import {
   NAV_Z_INDEX,
 } from "../lib/navigationChrome";
 import GiftCreationPage from "../screens/GiftCreationPage";
+import GiftMessageComposeScreen from "../screens/GiftMessageComposeScreen";
 import MyTracksScreen from "../screens/MyTracksScreen";
 import type { Stack } from "../components/Stack";
 import PlayScreen from "../screens/PlayScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
+import { loadDemoAccount, type DemoAccount } from "./demoAccountService";
 import {
   cacheRandomTracks,
   fetchGeneratedTracks,
@@ -33,6 +35,7 @@ import { loadSavedTracks, saveSavedTracks, type SavedTrackRecord } from "./devic
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type RootScreen = "all_tracks" | "my_tracks";
+type MyTracksSortMode = "title" | "artist" | "color";
 
 function shuffleItems<T>(items: T[]) {
   const next = [...items];
@@ -67,6 +70,10 @@ function warmTrackSetInBackground(tracks: FeedTrack[]) {
   void warmTrackSet(tracks);
 }
 
+function compareAlpha(left: string | null | undefined, right: string | null | undefined) {
+  return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
+}
+
 export default function ScreenFlowControl() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -74,15 +81,20 @@ export default function ScreenFlowControl() {
   const [selectedStackIndex, setSelectedStackIndex] = useState<number | null>(null);
   const [selectedProjects, setSelectedProjects] = useState<Stack[] | null>(null);
   const [giftingProjects, setGiftingProjects] = useState<Stack[] | null>(null);
+  const [giftMessage, setGiftMessage] = useState("");
+  const [giftMessageComposerOpen, setGiftMessageComposerOpen] = useState(false);
   const [rootScreen, setRootScreen] = useState<RootScreen>("all_tracks");
   const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackRecord>>({});
+  const [demoAccount, setDemoAccount] = useState<DemoAccount | null>(null);
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
   const [feedReady, setFeedReady] = useState(false);
   const [overviewScrollOffset, setOverviewScrollOffset] = useState(0);
   const [myTracksScrollOffset, setMyTracksScrollOffset] = useState(0);
   const [overviewStackShuffleVersion, setOverviewStackShuffleVersion] = useState(0);
+  const [myTracksSortMode, setMyTracksSortMode] = useState<MyTracksSortMode>("title");
   const screenFade = useRef(new Animated.Value(1)).current;
+  const menuPanelProgress = useRef(new Animated.Value(0)).current;
 
   const backGestureTriggered = useSharedValue(false);
 
@@ -102,7 +114,7 @@ export default function ScreenFlowControl() {
     [orderedTrackStacks]
   );
 
-  const refreshFeed = async (options?: { preferCache?: boolean; preserveVisibleFeed?: boolean }) => {
+  const refreshFeed = async (options?: { preferCache?: boolean; preserveVisibleFeed?: boolean; warmBeforeReady?: boolean }) => {
     // During manual refreshes we can keep the current UI visible until the replacement payload is ready.
     const preserveVisibleFeed = options?.preserveVisibleFeed === true;
     const previousTracks = feedTracks;
@@ -117,8 +129,14 @@ export default function ScreenFlowControl() {
         const cached = await loadCachedRandomTracks();
         if (cached && cached.tracks.length > 0) {
           setFeedTracks(cached.tracks);
+          if (options?.warmBeforeReady) {
+            await warmTrackSet(cached.tracks);
+            setOverviewPreviewPrimed(true);
+          }
           setFeedReady(true);
-          warmTrackSetInBackground(cached.tracks);
+          if (!options?.warmBeforeReady) {
+            warmTrackSetInBackground(cached.tracks);
+          }
           return;
         }
       } catch {
@@ -139,8 +157,14 @@ export default function ScreenFlowControl() {
 
       setFeedTracks(result.tracks);
       setOverviewScrollOffset(0);
+      if (options?.warmBeforeReady) {
+        await warmTrackSet(result.tracks);
+        setOverviewPreviewPrimed(true);
+      }
       setFeedReady(true);
-      warmTrackSetInBackground(result.tracks);
+      if (!options?.warmBeforeReady) {
+        warmTrackSetInBackground(result.tracks);
+      }
       void cacheRandomTracks(result);
     } catch (error) {
       console.warn("MusicBrainz track fetch failed; no track stacks available.", error);
@@ -161,7 +185,7 @@ export default function ScreenFlowControl() {
       try {
         if (cancelled) return;
         // Boot prefers cache so the first usable feed appears with minimal waiting.
-        await refreshFeed({ preferCache: true });
+        await refreshFeed({ preferCache: true, warmBeforeReady: true });
       } catch {
         if (!cancelled) {
           setFeedTracks([]);
@@ -194,6 +218,23 @@ export default function ScreenFlowControl() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootDemoAccount = async () => {
+      const account = await loadDemoAccount();
+      if (!cancelled) {
+        setDemoAccount(account);
+      }
+    };
+
+    void bootDemoAccount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const projectLookup = useMemo(() => {
     const map = new Map<string, { project: Stack; stackIndex: number }>();
     activeTrackStacks.forEach((stack, stackIndex) => {
@@ -205,7 +246,7 @@ export default function ScreenFlowControl() {
   }, [activeTrackStacks]);
 
   const savedTrackStacks = useMemo(() => {
-    return Object.keys(savedTracksSet)
+    const stacks = Object.keys(savedTracksSet)
       .map((trackId) => {
         const savedTrack = savedTracksSet[trackId];
         if (!savedTrack) return null;
@@ -215,7 +256,25 @@ export default function ScreenFlowControl() {
         };
       })
       .filter((value): value is (typeof activeTrackStacks)[number] => value != null);
-  }, [savedTracksSet]);
+
+    if (myTracksSortMode === "artist") {
+      return [...stacks].sort((left, right) =>
+        compareAlpha(left.projects[0]?.artistName, right.projects[0]?.artistName) ||
+        compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
+      );
+    }
+
+    if (myTracksSortMode === "color") {
+      return [...stacks].sort((left, right) =>
+        compareAlpha(left.projects[0]?.color, right.projects[0]?.color) ||
+        compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
+      );
+    }
+
+    return [...stacks].sort((left, right) =>
+      compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
+    );
+  }, [myTracksSortMode, savedTracksSet]);
 
   const myTrackSections = useMemo(
     () => chunkItems(savedTrackStacks, STACKS_PER_SECTION),
@@ -227,10 +286,11 @@ export default function ScreenFlowControl() {
   const selectedStack = selectedProjects ?? (selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null)?.projects ?? null;
   const giftingStack = giftingProjects;
   const routeKey = useMemo(() => {
+    if (giftMessageComposerOpen) return "gift-message";
     if (giftingProjects != null) return "gift";
     if (selectedStack != null) return `detail-${selectedStack[0]?.id ?? "stack"}`;
     return rootScreen;
-  }, [giftingProjects, rootScreen, selectedStack]);
+  }, [giftMessageComposerOpen, giftingProjects, rootScreen, selectedStack]);
 
   useLayoutEffect(() => {
     screenFade.setValue(1);
@@ -248,6 +308,14 @@ export default function ScreenFlowControl() {
       screenFade.stopAnimation();
     };
   }, [routeKey, screenFade]);
+
+  useEffect(() => {
+    Animated.timing(menuPanelProgress, {
+      toValue: menuOpen ? 1 : 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [menuOpen, menuPanelProgress]);
 
   const handleSaveProject = (project: Stack) => {
     // Saved tracks are tracked by project id so the same item stays stable across screens.
@@ -274,6 +342,21 @@ export default function ScreenFlowControl() {
       void saveSavedTracks(next);
       return next;
     });
+  };
+
+  const handleConfirmRemoveProject = (project: Stack) => {
+    Alert.alert(
+      "Unsave Track?",
+      "Are you sure you want to unsave this track?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unsave",
+          style: "destructive",
+          onPress: () => handleRemoveProject(project),
+        },
+      ]
+    );
   };
 
   const handleBackFromDetail = () => {
@@ -310,12 +393,17 @@ export default function ScreenFlowControl() {
   };
 
   const handleBackFromGift = () => {
+    setGiftMessageComposerOpen(false);
     setGiftingProjects(null);
   };
 
   const handleGlobalBack = () => {
     // Back behavior is centralized here so gestures and buttons follow the same rules.
     if (giftingProjects != null) {
+      if (giftMessageComposerOpen) {
+        setGiftMessageComposerOpen(false);
+        return;
+      }
       handleBackFromGift();
       return;
     }
@@ -372,52 +460,101 @@ export default function ScreenFlowControl() {
           <Pressable
             hitSlop={20}
             onPress={
-              giftingProjects != null
-                ? handleBackFromGift
-                : handleBackFromDetail
+              giftMessageComposerOpen
+                ? () => setGiftMessageComposerOpen(false)
+                : giftingProjects != null
+                  ? handleBackFromGift
+                  : handleBackFromDetail
             }
             style={[styles.backButton, { top: navTop }]}
           >
             <Text style={styles.backArrow}>{"\u2190"}</Text>
           </Pressable>
-          <View style={[styles.topRightMenuWrap, { top: navTop }]}>
-            <Pressable onPress={() => setMenuOpen((current) => !current)} style={styles.hamburger}>
-              <Text style={styles.hamburgerText}>{"\u2630"}</Text>
-            </Pressable>
-            {menuOpen ? (
-              <View style={styles.menuSheet}>
-                {rootScreen === "my_tracks" ? (
-                  <Pressable
-                    onPress={() => {
-                      setMenuOpen(false);
-                      setSelectedStackIndex(null);
-                      setRootScreen("all_tracks");
-                    }}
-                    style={styles.menuItem}
-                  >
-                    <Text style={styles.menuItemText}>All Tracks</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    onPress={() => {
-                      setMenuOpen(false);
-                      setSelectedStackIndex(null);
-                      setRootScreen("my_tracks");
-                    }}
-                    style={styles.menuItem}
-                  >
-                    <Text style={styles.menuItemText}>My Tracks</Text>
-                  </Pressable>
-                )}
+          {!menuOpen ? (
+            <View style={[styles.topRightMenuWrap, { top: navTop }]}>
+              <Pressable onPress={() => setMenuOpen(true)} style={styles.hamburger}>
+                <Text style={styles.hamburgerText}>{"\u2630"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <Animated.View
+            pointerEvents={menuOpen ? "auto" : "none"}
+            style={[
+              styles.menuPanel,
+              {
+                opacity: menuPanelProgress,
+                transform: [
+                  {
+                    translateX: menuPanelProgress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [36, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View style={[styles.menuPanelInner, { paddingTop: navTop }]}>
+              <View style={styles.menuPanelHeader}>
+                <Pressable onPress={() => setMenuOpen(false)} style={styles.hamburger}>
+                  <Text style={styles.hamburgerText}>{"\u2715"}</Text>
+                </Pressable>
               </View>
-            ) : null}
-          </View>
+              <Pressable
+                onPress={() => {
+                  setMenuOpen(false);
+                  setSelectedStackIndex(null);
+                  setSelectedProjects(null);
+                  setGiftingProjects(null);
+                  setRootScreen("all_tracks");
+                }}
+                style={styles.menuItem}
+              >
+                <Text style={styles.menuItemText}>Home</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setMenuOpen(false);
+                  setSelectedStackIndex(null);
+                  setSelectedProjects(null);
+                  setGiftingProjects(null);
+                  setRootScreen("my_tracks");
+                }}
+                style={styles.menuItem}
+              >
+                <Text style={styles.menuItemText}>My Tracks</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
         </View>
         <View style={styles.detailCanvas}>
           {giftingProjects != null ? (
-            <GiftCreationPage projects={giftingStack ?? []} />
+            giftMessageComposerOpen ? (
+              <GiftMessageComposeScreen
+                message={giftMessage}
+                onChangeMessage={setGiftMessage}
+                onDone={() => setGiftMessageComposerOpen(false)}
+              />
+            ) : (
+              <GiftCreationPage
+                giftMessage={giftMessage}
+                onPressComposeMessage={() => setGiftMessageComposerOpen(true)}
+                projects={giftingStack ?? []}
+              />
+            )
           ) : (
             <PlayScreen
+              onPressGift={(project) => {
+                setGiftMessage("");
+                setGiftMessageComposerOpen(false);
+                setGiftingProjects([project]);
+              }}
+              onPressRemove={handleConfirmRemoveProject}
+              onPressSave={handleSaveProject}
+              savedTrackIds={Object.keys(savedTracksSet).reduce<Record<string, boolean>>((acc, id) => {
+                acc[id] = true;
+                return acc;
+              }, {})}
               projects={selectedStack}
             />
           )}
@@ -428,14 +565,20 @@ export default function ScreenFlowControl() {
   }
 
   if (!feedReady) {
-    // While booting, render a blank root instead of half-built UI.
-    return <View style={styles.pageRoot} />;
+    return (
+      <View style={styles.bootPage}>
+        <View style={styles.bootMarkWrap}>
+          <Text style={styles.bootMark}>{"RECORDROOM\u00A9"}</Text>
+        </View>
+      </View>
+    );
   }
 
   return (
     <View style={styles.pageRoot}>
       {rootScreen === "my_tracks" ? (
         <MyTracksScreen
+          accountLabel={demoAccount ? `${demoAccount.displayName} · ${demoAccount.username}` : undefined}
           layout={layout}
           sections={myTrackSections}
           previewRevealPrimed={overviewPreviewPrimed}
@@ -444,6 +587,23 @@ export default function ScreenFlowControl() {
             setRootScreen("all_tracks");
           }}
           onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
+          sortOptions={[
+            {
+              id: "sort-title",
+              label: "Sort: Title",
+              onPress: () => setMyTracksSortMode("title"),
+            },
+            {
+              id: "sort-artist",
+              label: "Sort: Artist",
+              onPress: () => setMyTracksSortMode("artist"),
+            },
+            {
+              id: "sort-color",
+              label: "Sort: Color",
+              onPress: () => setMyTracksSortMode("color"),
+            },
+          ]}
           onScrollOffsetChange={setMyTracksScrollOffset}
           onPressStack={async (sectionIndex, stackIndex) => {
             const savedStack = myTrackSections[sectionIndex]?.[stackIndex];
@@ -455,6 +615,7 @@ export default function ScreenFlowControl() {
         />
       ) : (
         <TracksOverviewScreen
+          accountLabel={demoAccount ? `${demoAccount.displayName} · ${demoAccount.username}` : undefined}
           layout={layout}
           sections={allTrackSections}
           previewRevealPrimed={overviewPreviewPrimed}
@@ -495,6 +656,21 @@ export default function ScreenFlowControl() {
 const styles = StyleSheet.create({
   pageRoot: {
     flex: 1,
+  },
+  bootPage: {
+    flex: 1,
+    backgroundColor: "#FEFEFE",
+  },
+  bootMarkWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bootMark: {
+    color: "#111111",
+    fontSize: 48,
+    fontWeight: "600",
+    letterSpacing: 1,
   },
   detailPage: {
     flex: 1,
@@ -558,6 +734,26 @@ const styles = StyleSheet.create({
     right: NAV_RIGHT_INSET,
     zIndex: NAV_Z_INDEX,
     alignItems: "flex-end",
+  },
+  menuPanel: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: "50%",
+    zIndex: NAV_Z_INDEX + 2,
+    backgroundColor: "rgba(236,236,236,0.88)",
+    borderLeftWidth: 1,
+    borderLeftColor: "rgba(17,17,17,0.08)",
+  },
+  menuPanelInner: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingBottom: 28,
+  },
+  menuPanelHeader: {
+    alignItems: "flex-end",
+    marginBottom: 18,
   },
   hamburger: {
     width: NAV_BUTTON_SIZE,

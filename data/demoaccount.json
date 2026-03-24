@@ -1,0 +1,8 @@
+{
+  "id": "demo-account",
+  "displayName": "Demo Account",
+  "username": "demoaccount",
+  "email": "demo@recordroom.app",
+  "plan": "prototype",
+  "avatarColor": "#111111"
+}
