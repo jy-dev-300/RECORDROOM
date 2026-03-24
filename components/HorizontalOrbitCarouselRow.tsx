@@ -37,6 +37,7 @@ type HorizontalOrbitCarouselRowProps<T> = {
   disabled?: boolean;
   verticalDirection?: VerticalDirection;
   verticalCurve?: number;
+  gestureActivationDistance?: number;
 };
 
 function wrapIndex(index: number, size: number) {
@@ -71,6 +72,7 @@ export default function HorizontalOrbitCarouselRow<T>({
   disabled = false,
   verticalDirection = "up",
   verticalCurve = 48,
+  gestureActivationDistance = 6,
 }: HorizontalOrbitCarouselRowProps<T>) {
   const count = data.length;
   const position = useRef(new Animated.Value(initialIndex)).current;
@@ -129,7 +131,10 @@ export default function HorizontalOrbitCarouselRow<T>({
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gesture) => {
           if (disabled || count <= 1) return false;
-          return Math.abs(gesture.dx) > 6 && Math.abs(gesture.dx) > Math.abs(gesture.dy);
+          return (
+            Math.abs(gesture.dx) > gestureActivationDistance &&
+            Math.abs(gesture.dx) > Math.abs(gesture.dy)
+          );
         },
         onPanResponderGrant: () => {
           position.stopAnimation((value) => {
@@ -151,7 +156,7 @@ export default function HorizontalOrbitCarouselRow<T>({
           snapToRaw(Math.round(positionRef.current));
         },
       }),
-    [count, disabled, itemSpacing, position]
+    [count, disabled, gestureActivationDistance, itemSpacing, position]
   );
 
   if (count === 0) return null;

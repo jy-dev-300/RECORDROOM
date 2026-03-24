@@ -1,5 +1,5 @@
 import type { FeedTrack } from "../services/soundCloudRandomTracks";
-import type { StackProject } from "../screens/SingleTrackStackScreen";
+import type { Stack as StackProject } from "../components/Stack";
 
 export type TrackStack = {
   id: string;
@@ -135,6 +135,7 @@ export function createTrackStackFromTracks(tracks: FeedTrack[], stackIndex: numb
       releaseTitle: track.source?.release_title ?? null,
       media: track.artwork_url ?? "",
       thumbnail: track.artwork_url ?? undefined,
+      previewFallback: track.artwork_url ?? undefined,
       type: "image" as const,
       color: getTrackColor(track.id, cardIndex),
     })),

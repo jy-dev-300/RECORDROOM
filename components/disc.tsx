@@ -16,6 +16,11 @@ import Svg, {
 } from "react-native-svg";
 /* SVGR has dropped some elements not supported by react-native-svg: div, filter */
 
+export const DISC_LABEL_SIZE_RATIO = 0.555;
+export const DISC_VERTICAL_TILT_DEG = "61deg";
+export const DISC_SIZE_RATIO = 0.55;
+export const DISC_VERTICAL_SQUASH_RATIO = 0.82;
+
 const SVGComponent = (props: SvgProps) => (
   <Svg
     width={932}
@@ -175,14 +180,7 @@ const SVGComponent = (props: SvgProps) => (
         }}
       />
     </Mask>
-    <G mask="url(#mask0_8_8458)">
-      <Path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M732.649 373.11L549.539 190L200 539.539L383.11 722.649L732.649 373.11ZM464.943 582.199C535.225 582.199 592.199 525.225 592.199 454.943C592.199 384.661 535.225 327.687 464.943 327.687C394.661 327.687 337.687 384.661 337.687 454.943C337.687 525.225 394.661 582.199 464.943 582.199Z"
-        fill="url(#paint4_linear_8_8458)"
-      />
-    </G>
+    {null}
     <Mask
       id="mask1_8_8458"
       style={{

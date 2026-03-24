@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
+  Easing,
   runOnJS,
   type SharedValue,
+  useAnimatedStyle,
   useAnimatedScrollHandler,
   useSharedValue,
+  withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { TrackStack } from "../data/trackStacks";
@@ -37,9 +40,11 @@ type TracksOverviewScreenProps = {
   onPressMyTracks?: () => void;
   onPressAllTracks?: () => void;
   onPressRefresh?: () => void;
+  onPressRefetch?: () => void;
   onPreviewRevealPrimed?: () => void;
   initialScrollOffset?: number;
   onScrollOffsetChange?: (offset: number) => void;
+  onPrepareStack?: (sectionIndex: number, stackIndex: number) => void;
   onPressStack: (
     sectionIndex: number,
     stackIndex: number,
@@ -74,6 +79,7 @@ type OverviewStackProps = {
   showDeferredLayers: boolean;
   scrollY: SharedValue<number>;
   onFrontLayerReady: (stackId: string) => void;
+  onPrepareStack?: (sectionIndex: number, stackIndex: number) => void;
   onPressStack: (
     sectionIndex: number,
     stackIndex: number,
@@ -90,9 +96,12 @@ function OverviewStack({
   showDeferredLayers,
   scrollY,
   onFrontLayerReady,
+  onPrepareStack,
   onPressStack,
 }: OverviewStackProps) {
   const frame = useMemo(() => getSectionFrame(layout, sectionIndex), [layout, sectionIndex]);
+  const [isStraightening, setIsStraightening] = useState(false);
+  const tapStraightenProgress = useSharedValue(0);
   const previewSize = layout.previewSize;
   const previewHeight = useMemo(() => getPreviewPressableHeight(previewSize), [previewSize]);
   const previewLeft = frame.left + (frame.width - previewSize) / 2;
@@ -104,6 +113,9 @@ function OverviewStack({
       getPreviewParallaxRotation(previewLeft + jitter.x + previewSize / 2, layout.viewportWidth)
     );
   }, [layout.viewportWidth, previewLeft, previewSize, stack.id]);
+  const pressableStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 - tapStraightenProgress.value * 0.02 }],
+  }));
 
   return (
     <View
@@ -117,9 +129,16 @@ function OverviewStack({
         },
       ]}
     >
-      <Pressable
+      <Animated.View style={pressableStyle}>
+        <Pressable
         hitSlop={12}
         onPress={() => {
+          if (isStraightening) {
+            return;
+          }
+
+          setIsStraightening(true);
+          onPrepareStack?.(sectionIndex, 0);
           const previewLayerSnapshots = stack.projects.slice(0, 4).map((_, layerIndex) =>
             getPreviewLayerSnapshot({
               stackId: stack.id,
@@ -132,8 +151,18 @@ function OverviewStack({
               scrollY: scrollY.value,
             })
           );
-
-          onPressStack(sectionIndex, 0, previewRotation, previewLayerSnapshots);
+          tapStraightenProgress.value = withTiming(
+            1,
+            {
+              duration: 350,
+              easing: Easing.out(Easing.cubic),
+            },
+            (finished) => {
+              if (finished) {
+                runOnJS(onPressStack)(sectionIndex, 0, previewRotation, previewLayerSnapshots);
+              }
+            }
+          );
         }}
         style={[
           styles.stackPressable,
@@ -142,20 +171,22 @@ function OverviewStack({
             height: previewHeight,
           },
         ]}
-      >
-        <TrackStackPreviewOnOverviewScreen
-          stack={stack}
-          size={previewSize}
-          stackTop={previewTop}
-          stackLeft={previewLeft}
-          viewportWidth={layout.viewportWidth}
-          viewportHeight={layout.viewportHeight}
-          scrollY={scrollY}
-          revealFrontLayers={revealFrontLayers}
-          showDeferredLayers={showDeferredLayers}
-          onFrontLayerReady={onFrontLayerReady}
-        />
-      </Pressable>
+        >
+          <TrackStackPreviewOnOverviewScreen
+            stack={stack}
+            size={previewSize}
+            stackTop={previewTop}
+            stackLeft={previewLeft}
+            viewportWidth={layout.viewportWidth}
+            viewportHeight={layout.viewportHeight}
+            scrollY={scrollY}
+            straightenProgress={tapStraightenProgress}
+            revealFrontLayers={revealFrontLayers}
+            showDeferredLayers={showDeferredLayers}
+            onFrontLayerReady={onFrontLayerReady}
+          />
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
@@ -169,9 +200,11 @@ export default function TracksOverviewScreen({
   onPressMyTracks,
   onPressAllTracks,
   onPressRefresh,
+  onPressRefetch,
   onPreviewRevealPrimed,
   initialScrollOffset = 0,
   onScrollOffsetChange,
+  onPrepareStack,
   onPressStack,
 }: TracksOverviewScreenProps) {
   const insets = useSafeAreaInsets();
@@ -326,6 +359,7 @@ export default function TracksOverviewScreen({
                 showDeferredLayers={showOverviewFrays}
                 scrollY={scrollY}
                 onFrontLayerReady={handleFrontLayerReady}
+                onPrepareStack={onPrepareStack}
                 onPressStack={onPressStack}
               />
             );
@@ -341,8 +375,24 @@ export default function TracksOverviewScreen({
         <Pressable onPress={() => setMenuOpen((current) => !current)} style={styles.hamburger}>
           <Text style={styles.hamburgerText}>{"\u2630"}</Text>
         </Pressable>
+        {onPressRefresh ? (
+          <Pressable onPress={onPressRefresh} style={styles.refreshButton}>
+            <Text style={styles.refreshText}>{"\u21BB"}</Text>
+          </Pressable>
+        ) : null}
         {menuOpen ? (
           <View style={styles.menuSheet}>
+            {onPressRefetch ? (
+              <Pressable
+                onPress={() => {
+                  setMenuOpen(false);
+                  onPressRefetch();
+                }}
+                style={styles.menuItem}
+              >
+                <Text style={styles.menuItemText}>Refetch</Text>
+              </Pressable>
+            ) : null}
             {isMyTracksView ? (
               <Pressable
                 onPress={() => {
@@ -366,6 +416,19 @@ export default function TracksOverviewScreen({
             )}
           </View>
         ) : null}
+      </View>
+      <View
+        style={[
+          styles.brandMark,
+          {
+            top: "50%",
+            right: -135,
+          },
+        ]}
+      >
+        <Text numberOfLines={1} style={styles.brandMarkText}>
+          {"RECORDROOM\u00A9 RECORDROOM\u00A9 RECORDROOM\u00A9"}
+        </Text>
       </View>
     </View>
   );
@@ -409,6 +472,20 @@ const styles = StyleSheet.create({
     zIndex: NAV_Z_INDEX,
     alignItems: "flex-end",
   },
+  refreshButton: {
+    width: NAV_BUTTON_SIZE,
+    height: NAV_BUTTON_SIZE,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "transparent",
+    marginTop: 8,
+  },
+  refreshText: {
+    fontSize: NAV_ICON_SIZE - 2,
+    color: "#111111",
+    lineHeight: NAV_ICON_SIZE - 2,
+    fontWeight: "600",
+  },
   hamburger: {
     width: NAV_BUTTON_SIZE,
     height: NAV_BUTTON_SIZE,
@@ -438,5 +515,17 @@ const styles = StyleSheet.create({
     color: "#111111",
     fontSize: 15,
     fontWeight: "500",
+  },
+  brandMark: {
+    position: "absolute",
+    transform: [{ translateY: 160 }, { rotate: "-90deg" }],
+  },
+  brandMarkText: {
+    color: "#111111",
+    fontSize: 10,
+    fontWeight: "500",
+    letterSpacing: 2,
+    includeFontPadding: false,
+    textAlign: "left",
   },
 });

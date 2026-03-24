@@ -1,4 +1,8 @@
 import { config } from "./config";
+import {
+  loadSpotifyPreviewCache,
+  saveSpotifyPreviewCache,
+} from "./deviceSpotifyPreviewCache";
 
 export type SpotifyTrackMatch = {
   id: string;
@@ -14,6 +18,11 @@ export type SpotifyTrackMatch = {
 type SpotifyTrackMatchResponse = {
   track: SpotifyTrackMatch;
 };
+
+const spotifyTrackMatchCache = new Map<string, SpotifyTrackMatch | null>();
+const spotifyTrackMatchRequests = new Map<string, Promise<SpotifyTrackMatch | null>>();
+let spotifyTrackMatchCacheHydrated = false;
+let spotifyTrackMatchCacheHydrationPromise: Promise<void> | null = null;
 
 function getApiUrl(path: string) {
   if (!config.api.baseUrl) {
@@ -34,7 +43,45 @@ function assertSpotifyTrackMatchResponse(data: unknown): asserts data is Spotify
   }
 }
 
-export async function fetchSpotifyTrackMatch(params: {
+function buildSpotifyTrackMatchCacheKey(params: {
+  title: string;
+  artistName?: string | null;
+  releaseYear?: number | null;
+}) {
+  return JSON.stringify({
+    title: params.title.trim().toLowerCase(),
+    artistName: params.artistName?.trim().toLowerCase() ?? "",
+    releaseYear: typeof params.releaseYear === "number" ? params.releaseYear : "",
+  });
+}
+
+async function hydrateSpotifyTrackMatchCache() {
+  if (spotifyTrackMatchCacheHydrated) {
+    return;
+  }
+
+  if (!spotifyTrackMatchCacheHydrationPromise) {
+    spotifyTrackMatchCacheHydrationPromise = loadSpotifyPreviewCache()
+      .then((storedMatches) => {
+        Object.entries(storedMatches).forEach(([cacheKey, match]) => {
+          spotifyTrackMatchCache.set(cacheKey, match);
+        });
+        spotifyTrackMatchCacheHydrated = true;
+      })
+      .finally(() => {
+        spotifyTrackMatchCacheHydrationPromise = null;
+      });
+  }
+
+  await spotifyTrackMatchCacheHydrationPromise;
+}
+
+function persistSpotifyTrackMatchCache() {
+  const payload = Object.fromEntries(spotifyTrackMatchCache.entries());
+  void saveSpotifyPreviewCache(payload);
+}
+
+async function loadSpotifyTrackMatch(params: {
   title: string;
   artistName?: string | null;
   releaseYear?: number | null;
@@ -62,4 +109,45 @@ export async function fetchSpotifyTrackMatch(params: {
   const raw = await response.json();
   assertSpotifyTrackMatchResponse(raw);
   return raw.track;
+}
+
+export async function fetchSpotifyTrackMatch(params: {
+  title: string;
+  artistName?: string | null;
+  releaseYear?: number | null;
+}) {
+  await hydrateSpotifyTrackMatchCache();
+  const cacheKey = buildSpotifyTrackMatchCacheKey(params);
+
+  if (spotifyTrackMatchCache.has(cacheKey)) {
+    return spotifyTrackMatchCache.get(cacheKey) ?? null;
+  }
+
+  const inFlightRequest = spotifyTrackMatchRequests.get(cacheKey);
+  if (inFlightRequest) {
+    return inFlightRequest;
+  }
+
+  const request = loadSpotifyTrackMatch(params)
+    .then((match) => {
+      spotifyTrackMatchCache.set(cacheKey, match);
+      persistSpotifyTrackMatchCache();
+      spotifyTrackMatchRequests.delete(cacheKey);
+      return match;
+    })
+    .catch((error) => {
+      spotifyTrackMatchRequests.delete(cacheKey);
+      throw error;
+    });
+
+  spotifyTrackMatchRequests.set(cacheKey, request);
+  return request;
+}
+
+export function prefetchSpotifyTrackMatch(params: {
+  title: string;
+  artistName?: string | null;
+  releaseYear?: number | null;
+}) {
+  void fetchSpotifyTrackMatch(params).catch(() => {});
 }

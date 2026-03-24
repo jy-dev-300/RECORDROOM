@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import Animated, {
@@ -179,10 +179,59 @@ type TrackStackPreviewOnOverviewScreenProps = {
   viewportWidth: number;
   viewportHeight: number;
   scrollY: SharedValue<number>;
+  straightenProgress?: SharedValue<number>;
   revealFrontLayers?: boolean;
   showDeferredLayers?: boolean;
   onFrontLayerReady?: (stackId: string) => void;
 };
+
+function PreviewLayerShell({
+  size,
+  rel,
+  jitter,
+  zIndex,
+  straightenProgress,
+  children,
+}: {
+  size: number;
+  rel: number;
+  jitter: { x: number; y: number; rotate: number };
+  zIndex: number;
+  straightenProgress?: SharedValue<number>;
+  children: React.ReactNode;
+}) {
+  const baseTranslateY = -getPreviewStackOffset(size, rel);
+  const layerStyle = useAnimatedStyle(() => {
+    const progress = straightenProgress?.value ?? 0;
+    const remaining = 1 - progress;
+
+    return {
+      transform: [
+        { translateX: jitter.x * remaining },
+        { translateY: baseTranslateY + jitter.y },
+        { rotate: `${jitter.rotate * remaining}deg` },
+      ],
+    };
+  }, [baseTranslateY, jitter, straightenProgress]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.previewLayer,
+        {
+          width: size,
+          height: size,
+          bottom: 0,
+          left: 0,
+          zIndex,
+        },
+        layerStyle,
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
 
 function PreviewImageLayer({
   rel,
@@ -191,7 +240,9 @@ function PreviewImageLayer({
   viewportWidth,
   viewportHeight,
   scrollY,
+  straightenProgress,
   source,
+  fallbackSource,
   hidden,
   stackParallaxVariance,
   stackParallaxXBias,
@@ -209,7 +260,9 @@ function PreviewImageLayer({
   viewportWidth: number;
   viewportHeight: number;
   scrollY: SharedValue<number>;
+  straightenProgress?: SharedValue<number>;
   source: string;
+  fallbackSource?: string;
   hidden: boolean;
   stackParallaxVariance: number;
   stackParallaxXBias: number;
@@ -221,7 +274,15 @@ function PreviewImageLayer({
   rotationDirectionalResponse: { negative: number; positive: number };
   onLoadEnd: () => void;
 }) {
+  const [useFallbackSource, setUseFallbackSource] = useState(false);
+
+  useEffect(() => {
+    setUseFallbackSource(false);
+  }, [fallbackSource, source]);
+
   const imageParallaxStyle = useAnimatedStyle(() => {
+    const straighten = straightenProgress?.value ?? 0;
+    const remaining = 1 - straighten;
     const viewportCenterY = viewportHeight / 2;
     const viewportCenterX = viewportWidth / 2;
     const cardCenterY = stackTop - scrollY.value;
@@ -273,9 +334,9 @@ function PreviewImageLayer({
 
     return {
       transform: [
-        { translateX: translateImageX },
+        { translateX: translateImageX * remaining },
         { translateY: translateImageY },
-        { rotate: `${rotateZ}deg` },
+        { rotate: `${rotateZ * remaining}deg` },
       ],
     };
   }, [
@@ -288,6 +349,7 @@ function PreviewImageLayer({
     stackParallaxVariance,
     stackParallaxXBias,
     stackTop,
+    straightenProgress,
     viewportHeight,
     viewportWidth,
     rotationDirectionalResponse,
@@ -300,8 +362,16 @@ function PreviewImageLayer({
       <ExpoImage
         cachePolicy="memory-disk"
         contentFit="cover"
+        onError={() => {
+          if (!useFallbackSource && fallbackSource && fallbackSource !== source) {
+            setUseFallbackSource(true);
+            return;
+          }
+
+          onLoadEnd();
+        }}
         onLoadEnd={onLoadEnd}
-        source={{ uri: source }}
+        source={{ uri: useFallbackSource ? fallbackSource ?? source : source }}
         style={[styles.previewImage, hidden ? styles.hiddenFrontImage : null]}
         transition={0}
       />
@@ -317,6 +387,7 @@ function TrackStackPreviewOnOverviewScreen({
   viewportWidth,
   viewportHeight,
   scrollY,
+  straightenProgress,
   revealFrontLayers = true,
   showDeferredLayers = true,
   onFrontLayerReady,
@@ -351,7 +422,6 @@ function TrackStackPreviewOnOverviewScreen({
         .reverse()
         .map((project, reverseIndex) => {
           const rel = visibleLayers.length - 1 - reverseIndex;
-          const translateY = -getPreviewStackOffset(size, rel);
           const jitter = getPreviewJitter(stack.id, rel, size);
           const layerParallaxVariance = getLayerParallaxVariance(stack.id, rel);
           const layerParallaxXBias = getLayerParallaxXBias(stack.id, rel);
@@ -361,33 +431,25 @@ function TrackStackPreviewOnOverviewScreen({
           const rotationDirectionalResponse = getDirectionalParallaxResponse(stack.id, rel, "rotate");
 
           return (
-            <View
+            <PreviewLayerShell
               key={project.id}
-              style={[
-                styles.previewLayer,
-                {
-                  width: size,
-                  height: size,
-                  bottom: 0,
-                  left: 0,
-                  zIndex: 10 - rel,
-                  transform: [
-                    { translateX: jitter.x },
-                    { translateY: translateY + jitter.y },
-                    { rotate: `${jitter.rotate}deg` },
-                  ],
-                },
-              ]}
+              size={size}
+              rel={rel}
+              jitter={jitter}
+              zIndex={10 - rel}
+              straightenProgress={straightenProgress}
             >
               {project.thumbnail || project.media ? (
                 <PreviewImageLayer
                   rel={rel}
-                  stackTop={stackTop + translateY + jitter.y + size / 2}
+                  stackTop={stackTop - getPreviewStackOffset(size, rel) + jitter.y + size / 2}
                   stackLeft={stackLeft + jitter.x + size / 2}
                   viewportWidth={viewportWidth}
                   viewportHeight={viewportHeight}
                   scrollY={scrollY}
+                  straightenProgress={straightenProgress}
                   source={project.thumbnail || project.media}
+                  fallbackSource={project.previewFallback || project.media}
                   hidden={rel === 0 && !revealFrontLayers}
                   stackParallaxVariance={stackParallaxVariance}
                   stackParallaxXBias={stackParallaxXBias}
@@ -405,7 +467,7 @@ function TrackStackPreviewOnOverviewScreen({
                   }}
                 />
               ) : null}
-            </View>
+            </PreviewLayerShell>
           );
         })}
     </View>
@@ -420,6 +482,11 @@ const styles = StyleSheet.create({
   },
   previewLayer: {
     position: "absolute",
+    shadowColor: "#000000",
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
   previewImage: {
     ...StyleSheet.absoluteFillObject,

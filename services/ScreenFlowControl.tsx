@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Animated, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { createTrackStackSections, createTrackStacksFromTracks } from "../data/trackStacks";
+import { createTrackStacksFromTracks } from "../data/trackStacks";
 import {
   buildTrackWorldLayout,
   chunkItems,
@@ -20,17 +20,30 @@ import {
 } from "../lib/navigationChrome";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import MyTracksScreen from "../screens/MyTracksScreen";
-import PlayOptionsScreen from "../screens/PlayOptionsScreen";
-import SingleTrackStackScreen, { type StackProject } from "../screens/SingleTrackStackScreen";
+import type { Stack } from "../components/Stack";
+import PlayScreen from "../screens/PlayScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
-import { cacheRandomTracks, fetchRandomTracks, loadCachedRandomTracks } from "./musicBrainzTrackFetchService";
+import {
+  cacheRandomTracks,
+  fetchGeneratedTracks,
+  fetchRandomTracks,
+  loadCachedRandomTracks,
+} from "./musicBrainzTrackFetchService";
 import { loadSavedTracks, saveSavedTracks, type SavedTrackRecord } from "./deviceSavedTracks";
-import type { PreviewLayerSnapshot } from "../components/TrackStackPreviewOnOverviewScreen";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
 type RootScreen = "all_tracks" | "my_tracks";
 
-async function prefetchStackAssets(projects: StackProject[]) {
+function shuffleItems<T>(items: T[]) {
+  const next = [...items];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+}
+
+async function prefetchStackAssets(projects: Stack[]) {
   // Warm just the artwork files for a stack so detail view opens without visible pop-in.
   await Promise.allSettled(
     projects.map(async (project) => {
@@ -59,13 +72,8 @@ export default function ScreenFlowControl() {
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedStackIndex, setSelectedStackIndex] = useState<number | null>(null);
-  const [selectedStackIntroRotation, setSelectedStackIntroRotation] = useState(0);
-  const [selectedStackIntroSnapshots, setSelectedStackIntroSnapshots] = useState<PreviewLayerSnapshot[] | null>(null);
-  const [selectedProjects, setSelectedProjects] = useState<StackProject[] | null>(null);
-  const [shouldAnimateDetailIntro, setShouldAnimateDetailIntro] = useState(false);
-  const [returningFromPlayOptions, setReturningFromPlayOptions] = useState(false);
-  const [playingProject, setPlayingProject] = useState<{ projectIndex: number } | null>(null);
-  const [giftingProjects, setGiftingProjects] = useState<StackProject[] | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<Stack[] | null>(null);
+  const [giftingProjects, setGiftingProjects] = useState<Stack[] | null>(null);
   const [rootScreen, setRootScreen] = useState<RootScreen>("all_tracks");
   const [savedTracksSet, setSavedTracksSet] = useState<Record<string, SavedTrackRecord>>({});
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
@@ -73,14 +81,25 @@ export default function ScreenFlowControl() {
   const [feedReady, setFeedReady] = useState(false);
   const [overviewScrollOffset, setOverviewScrollOffset] = useState(0);
   const [myTracksScrollOffset, setMyTracksScrollOffset] = useState(0);
+  const [overviewStackShuffleVersion, setOverviewStackShuffleVersion] = useState(0);
+  const screenFade = useRef(new Animated.Value(1)).current;
 
   const backGestureTriggered = useSharedValue(false);
 
   const layout = useMemo(() => buildTrackWorldLayout(width, height), [height, width]);
   const activeTrackStacks = useMemo(() => createTrackStacksFromTracks(feedTracks), [feedTracks]);
+  const orderedTrackStacks = useMemo(
+    () =>
+      activeTrackStacks.map((stack) => ({
+        ...stack,
+        projects:
+          overviewStackShuffleVersion === 0 ? stack.projects : shuffleItems(stack.projects),
+      })),
+    [activeTrackStacks, overviewStackShuffleVersion]
+  );
   const allTrackSections = useMemo(
-    () => createTrackStackSections(feedTracks),
-    [feedTracks]
+    () => chunkItems(orderedTrackStacks, STACKS_PER_SECTION),
+    [orderedTrackStacks]
   );
 
   const refreshFeed = async (options?: { preferCache?: boolean; preserveVisibleFeed?: boolean }) => {
@@ -176,7 +195,7 @@ export default function ScreenFlowControl() {
   }, []);
 
   const projectLookup = useMemo(() => {
-    const map = new Map<string, { project: StackProject; stackIndex: number }>();
+    const map = new Map<string, { project: Stack; stackIndex: number }>();
     activeTrackStacks.forEach((stack, stackIndex) => {
       stack.projects.forEach((project) => {
         map.set(project.id, { project, stackIndex });
@@ -203,20 +222,34 @@ export default function ScreenFlowControl() {
     [savedTrackStacks]
   );
 
-  const allTrackSourceSections = useMemo(
-    () =>
-      allTrackSections.map((section) =>
-        section.map((stack) => activeTrackStacks.findIndex((candidate) => candidate.id === stack.id))
-      ),
-    [activeTrackStacks, allTrackSections]
-  );
   const overviewShift = 0;
   const navTop = insets.top;
   const selectedStack = selectedProjects ?? (selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null)?.projects ?? null;
   const giftingStack = giftingProjects;
-  const playingStack = selectedStack;
+  const routeKey = useMemo(() => {
+    if (giftingProjects != null) return "gift";
+    if (selectedStack != null) return `detail-${selectedStack[0]?.id ?? "stack"}`;
+    return rootScreen;
+  }, [giftingProjects, rootScreen, selectedStack]);
 
-  const handleSaveProject = (project: StackProject) => {
+  useLayoutEffect(() => {
+    screenFade.setValue(1);
+    const timeout = setTimeout(() => {
+      const animation = Animated.timing(screenFade, {
+        toValue: 0,
+        duration: 100,
+        useNativeDriver: true,
+      });
+      animation.start();
+    }, 90);
+
+    return () => {
+      clearTimeout(timeout);
+      screenFade.stopAnimation();
+    };
+  }, [routeKey, screenFade]);
+
+  const handleSaveProject = (project: Stack) => {
     // Saved tracks are tracked by project id so the same item stays stable across screens.
     setSavedTracksSet((current) => {
       if (current[project.id]) return current;
@@ -233,7 +266,7 @@ export default function ScreenFlowControl() {
     });
   };
 
-  const handleRemoveProject = (project: StackProject) => {
+  const handleRemoveProject = (project: Stack) => {
     setSavedTracksSet((current) => {
       if (!current[project.id]) return current;
       const next = { ...current };
@@ -244,19 +277,36 @@ export default function ScreenFlowControl() {
   };
 
   const handleBackFromDetail = () => {
-    if (selectedStackIndex == null) return;
     setMenuOpen(false);
     setSelectedStackIndex(null);
     setSelectedProjects(null);
-    setSelectedStackIntroRotation(0);
-    setSelectedStackIntroSnapshots(null);
-    setShouldAnimateDetailIntro(false);
-    setReturningFromPlayOptions(false);
   };
 
-  const handleBackFromPlay = () => {
-    setPlayingProject(null);
-    setReturningFromPlayOptions(true);
+  const refetchFromGenerated = async () => {
+    const previousTracks = feedTracks;
+
+    try {
+      const result = await fetchGeneratedTracks();
+      if (result.tracks.length === 0) {
+        if (previousTracks.length > 0) {
+          setFeedTracks(previousTracks);
+        }
+        setFeedReady(true);
+        return;
+      }
+
+      setFeedTracks(result.tracks);
+      setOverviewScrollOffset(0);
+      setFeedReady(true);
+      warmTrackSetInBackground(result.tracks);
+      void cacheRandomTracks(result);
+    } catch (error) {
+      console.warn("Generated track refetch failed; keeping previous visible feed.", error);
+      if (previousTracks.length > 0) {
+        setFeedTracks(previousTracks);
+      }
+      setFeedReady(true);
+    }
   };
 
   const handleBackFromGift = () => {
@@ -265,17 +315,12 @@ export default function ScreenFlowControl() {
 
   const handleGlobalBack = () => {
     // Back behavior is centralized here so gestures and buttons follow the same rules.
-    if (playingProject != null) {
-      handleBackFromPlay();
-      return;
-    }
-
     if (giftingProjects != null) {
       handleBackFromGift();
       return;
     }
 
-    if (selectedStackIndex != null) {
+    if (selectedStack != null) {
       handleBackFromDetail();
       return;
     }
@@ -287,10 +332,7 @@ export default function ScreenFlowControl() {
   };
 
   const canGoBack =
-    playingProject != null ||
-    giftingProjects != null ||
-    selectedStack != null ||
-    rootScreen === "my_tracks";
+    giftingProjects != null || selectedStack != null || rootScreen === "my_tracks";
 
   const globalBackGesture = Gesture.Pan()
     .maxPointers(1)
@@ -313,23 +355,6 @@ export default function ScreenFlowControl() {
       }
     });
 
-  if (playingProject != null) {
-    const projects = playingStack ?? [];
-    return (
-      <View style={styles.pageRoot}>
-        <PlayOptionsScreen
-          projects={projects}
-          initialProjectIndex={playingProject.projectIndex}
-          onBack={handleBackFromPlay}
-          navTop={navTop}
-        />
-        <GestureDetector gesture={globalBackGesture}>
-          <View style={styles.globalBackEdge} />
-        </GestureDetector>
-      </View>
-    );
-  }
-
   if (selectedStack != null) {
     if (selectedStack.length === 0) {
       return <View style={styles.pageRoot} />;
@@ -346,7 +371,11 @@ export default function ScreenFlowControl() {
           ) : null}
           <Pressable
             hitSlop={20}
-            onPress={giftingProjects != null ? handleBackFromGift : handleBackFromDetail}
+            onPress={
+              giftingProjects != null
+                ? handleBackFromGift
+                : handleBackFromDetail
+            }
             style={[styles.backButton, { top: navTop }]}
           >
             <Text style={styles.backArrow}>{"\u2190"}</Text>
@@ -388,19 +417,12 @@ export default function ScreenFlowControl() {
           {giftingProjects != null ? (
             <GiftCreationPage projects={giftingStack ?? []} />
           ) : (
-            <SingleTrackStackScreen
+            <PlayScreen
               projects={selectedStack}
-              enableIntroAnimation={shouldAnimateDetailIntro && !returningFromPlayOptions}
-              introRotationOffsetDeg={selectedStackIntroRotation}
-              introLayerSnapshots={selectedStackIntroSnapshots ?? undefined}
-              onPlayPress={(_, index) => setPlayingProject({ projectIndex: index })}
-              onGiftPress={() => setGiftingProjects(selectedStack)}
-              isProjectSaved={(project) => savedTracksSet[project.id] != null}
-              onSaveProject={(project) => handleSaveProject(project)}
-              onRemoveProject={(project) => handleRemoveProject(project)}
             />
           )}
         </View>
+        <Animated.View pointerEvents="none" style={[styles.transitionOverlay, { opacity: screenFade }]} />
       </View>
     );
   }
@@ -423,14 +445,10 @@ export default function ScreenFlowControl() {
           }}
           onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
           onScrollOffsetChange={setMyTracksScrollOffset}
-          onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
+          onPressStack={async (sectionIndex, stackIndex) => {
             const savedStack = myTrackSections[sectionIndex]?.[stackIndex];
             if (!savedStack) return;
-            await prefetchStackAssets(savedStack.projects);
-            setShouldAnimateDetailIntro(true);
-            setReturningFromPlayOptions(false);
-            setSelectedStackIntroRotation(previewRotationDeg ?? 0);
-            setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
+            void prefetchStackAssets(savedStack.projects);
             setSelectedProjects(savedStack.projects);
             setSelectedStackIndex(null);
           }}
@@ -443,20 +461,22 @@ export default function ScreenFlowControl() {
           initialScrollOffset={overviewScrollOffset}
           onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
           onPressRefresh={() => {
-            void refreshFeed({ preferCache: false, preserveVisibleFeed: true });
+            setOverviewStackShuffleVersion((current) => current + 1);
+          }}
+          onPressRefetch={() => {
+            void refetchFromGenerated();
           }}
           onScrollOffsetChange={setOverviewScrollOffset}
-          onPressStack={async (sectionIndex, stackIndex, previewRotationDeg, previewLayerSnapshots) => {
-            const sourceStackIndex = allTrackSourceSections[sectionIndex]?.[stackIndex];
-            if (sourceStackIndex == null) return;
-            // Before opening detail, warm the tapped stack so the transition lands on already-ready art.
-            await prefetchStackAssets(activeTrackStacks[sourceStackIndex]?.projects ?? []);
-            setShouldAnimateDetailIntro(true);
-            setReturningFromPlayOptions(false);
-            setSelectedStackIntroRotation(previewRotationDeg ?? 0);
-            setSelectedStackIntroSnapshots(previewLayerSnapshots ?? null);
-            setSelectedStackIndex(sourceStackIndex);
-            setSelectedProjects(null);
+          onPrepareStack={(sectionIndex, stackIndex) => {
+            const selectedStack = allTrackSections[sectionIndex]?.[stackIndex];
+            if (!selectedStack) return;
+            void prefetchStackAssets(selectedStack.projects);
+          }}
+          onPressStack={async (sectionIndex, stackIndex) => {
+            const selectedStack = allTrackSections[sectionIndex]?.[stackIndex];
+            if (!selectedStack) return;
+            setSelectedProjects(selectedStack.projects);
+            setSelectedStackIndex(null);
           }}
           onPressMyTracks={() => {
             setMenuOpen(false);
@@ -467,6 +487,7 @@ export default function ScreenFlowControl() {
       <GestureDetector gesture={globalBackGesture}>
         <View style={styles.globalBackEdge} />
       </GestureDetector>
+      <Animated.View pointerEvents="none" style={[styles.transitionOverlay, { opacity: screenFade }]} />
     </View>
   );
 }
@@ -499,6 +520,14 @@ const styles = StyleSheet.create({
     width: EDGE_BACK_ZONE,
     zIndex: 60,
   },
+  playBackGestureEdge: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 16,
+    zIndex: 60,
+  },
   backButton: {
     position: "absolute",
     left: NAV_LEFT_INSET,
@@ -518,6 +547,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  transitionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#FEFEFE",
+    zIndex: 120,
   },
   topRightMenuWrap: {
     position: "absolute",

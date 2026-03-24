@@ -1,9 +1,9 @@
 import { Pressable, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import type { StackProject } from "./SingleTrackStackScreen";
+import type { Stack } from "../components/Stack";
 import HorizontalOrbitCarouselRow from "../components/HorizontalOrbitCarouselRow";
 
 type GiftCreationPageProps = {
-  projects: StackProject[];
+  projects: Stack[];
 };
 
 type GiftPlaceholderItem = {
@@ -14,7 +14,7 @@ type GiftPlaceholderItem = {
 const GIFT_ROW_GAP = 3;
 const GIFT_ROW_VERTICAL_CURVE = 58;
 
-function buildPlaceholderItems(projects: StackProject[], rowIndex: number): GiftPlaceholderItem[] {
+function buildPlaceholderItems(projects: Stack[], rowIndex: number): GiftPlaceholderItem[] {
   const palette =
     projects.length > 0
       ? projects.map((project, index) => ({

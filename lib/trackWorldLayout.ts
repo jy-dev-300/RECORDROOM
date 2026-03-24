@@ -143,7 +143,7 @@ export function buildTrackWorldLayout(width: number, height: number): TrackWorld
   while (previewSize > minPreview && getPreviewPressableHeight(previewSize) > maxRowHeight) {
     previewSize -= 1;
   }
-  previewSize = Math.max(1, Math.floor(previewSize * 0.98));
+  previewSize = Math.max(1, Math.floor(previewSize * 0.9));
 
   const rowHeight = getPreviewPressableHeight(previewSize);
   const sectionHeight = sectionInnerPadding * 2 + rowHeight;
@@ -155,7 +155,7 @@ export function buildTrackWorldLayout(width: number, height: number): TrackWorld
   const megaBlockLeft = (worldWidth - megaBlockWidth) / 2;
   const megaBlockTop = 0;
 
-  const detailStackWidth = clamp(width * 0.88, 280, 420);
+  const detailStackWidth = clamp(width * 0.72, 240, 340);
   const resolveEndScale = clamp(detailStackWidth / Math.max(1, previewSize), 2.4, 24);
   const resolveStartScale = resolveEndScale * 0.72;
   const maxScale = Math.max(

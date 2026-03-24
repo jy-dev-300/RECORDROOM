@@ -1,5 +1,5 @@
 import * as FileSystem from "../node_modules/expo/node_modules/expo-file-system/legacy";
-import type { StackProject } from "../screens/SingleTrackStackScreen";
+import type { Stack as StackProject } from "../components/Stack";
 
 export type SavedTrackRecord = {
   track_id: string;

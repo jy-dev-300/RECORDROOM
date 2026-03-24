@@ -6,6 +6,13 @@ import {
   saveDailyTracksPayload,
 } from "./deviceTrackCache";
 import type { FeedTrack } from "./soundCloudRandomTracks";
+type GeneratedFeedTrack = FeedTrack & {
+  source_artwork_url?: string | null;
+};
+
+const generatedTrackPool = require("../generated/musicbrainz-track-pool-2026.json") as {
+  tracks?: GeneratedFeedTrack[];
+};
 
 type RandomTracksResponse = {
   tracks: FeedTrack[];
@@ -37,6 +44,33 @@ function getApiUrl(path: string) {
   return `${config.api.baseUrl.replace(/\/$/, "")}${path}`;
 }
 
+function getGeneratedArtworkUrl(track: GeneratedFeedTrack) {
+  const localMediaBaseUrl = config.api.localMediaBaseUrl.trim();
+  const rawArtwork = typeof track.artwork_url === "string" ? track.artwork_url.trim() : "";
+  const filename = rawArtwork.split("/").pop();
+
+  if (localMediaBaseUrl && filename) {
+    return `${localMediaBaseUrl.replace(/\/$/, "")}/generated/track-artwork/${filename}`;
+  }
+
+  if (typeof track.source_artwork_url === "string" && track.source_artwork_url.trim().length > 0) {
+    return track.source_artwork_url;
+  }
+
+  return track.artwork_url;
+}
+
+function shuffle<T>(items: T[]) {
+  const copy = [...items];
+
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
+  }
+
+  return copy;
+}
+
 export async function fetchRandomTracks() {
   // A true refresh starts from a clean device cache so we never mix old and new payloads.
   await clearTrackCache();
@@ -58,6 +92,27 @@ export async function fetchRandomTracks() {
   return {
     tracks,
     // Keep an id lookup around for downstream code that wants fast access.
+    tracksById: new Map(tracks.map((track) => [track.id, track])),
+  };
+}
+
+export async function fetchGeneratedTracks() {
+  await clearTrackCache();
+  const localTracks = Array.isArray(generatedTrackPool.tracks) ? generatedTrackPool.tracks : [];
+  if (localTracks.length === 0) {
+    throw new Error("Generated track pool is empty or missing.");
+  }
+
+  const tracks = shuffle(localTracks)
+    .slice(0, 128)
+    .map<FeedTrack>((track) => ({
+      ...track,
+      artwork_url: getGeneratedArtworkUrl(track),
+    }))
+    .filter(hasArtwork);
+
+  return {
+    tracks,
     tracksById: new Map(tracks.map((track) => [track.id, track])),
   };
 }
