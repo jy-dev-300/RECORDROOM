@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFonts } from "expo-font";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   runOnJS,
   SensorType,
@@ -10,6 +12,7 @@ import Animated, {
   useAnimatedStyle,
   useAnimatedScrollHandler,
   useSharedValue,
+  withRepeat,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -33,15 +36,19 @@ import TrackStackPreviewOnOverviewScreen, {
   getPreviewParallaxRotation,
   type PreviewLayerSnapshot,
 } from "../components/TrackStackPreviewOnOverviewScreen";
+import AppIcon from "../components/AppIcon";
+import MenuToggleButton from "../components/MenuToggleButton";
+import NavigationMenu from "../components/NavigationMenu";
+import ScreenDustOverlay from "../components/ScreenDustOverlay";
 
 type TracksOverviewScreenProps = {
   layout: TrackWorldLayout;
   sections: TrackStack[][];
   previewRevealPrimed?: boolean;
-  isMyTracksView?: boolean;
   onBack?: () => void;
-  onPressMyTracks?: () => void;
+  onPressSavedTracks?: () => void;
   onPressAllTracks?: () => void;
+  onPressLoadingDebug?: () => void;
   onPressRefresh?: () => void;
   onPressRefetch?: () => void;
   accountLabel?: string;
@@ -53,6 +60,8 @@ type TracksOverviewScreenProps = {
   onPreviewRevealPrimed?: () => void;
   initialScrollOffset?: number;
   onScrollOffsetChange?: (offset: number) => void;
+  screenTitle?: string;
+  extraContentTopPadding?: number;
   onPrepareStack?: (sectionIndex: number, stackIndex: number) => void;
   onPressStack: (
     sectionIndex: number,
@@ -68,6 +77,8 @@ type SectionFrame = {
   width: number;
   height: number;
 };
+
+const BRAND_BELT_DURATION_MS = 30200;
 
 function getSectionFrame(layout: TrackWorldLayout, sectionIndex: number): SectionFrame {
   const row = Math.floor(sectionIndex / SECTIONS_PER_ROW);
@@ -119,6 +130,7 @@ function OverviewStack({
   const previewHeight = useMemo(() => getPreviewPressableHeight(previewSize), [previewSize]);
   const previewLeft = frame.left + (frame.width - previewSize) / 2;
   const previewTop = frame.top + frame.height - previewHeight;
+  const stackZIndex = Math.round((layout.viewportHeight - (previewTop + previewHeight)) * 10) + 10000;
   const previewRotation = useMemo(() => {
     const jitter = getPreviewJitter(stack.id, 0, previewSize);
     return (
@@ -139,6 +151,7 @@ function OverviewStack({
           top: frame.top,
           width: frame.width,
           height: frame.height,
+          zIndex: stackZIndex,
         },
       ]}
     >
@@ -210,10 +223,10 @@ export default function TracksOverviewScreen({
   layout,
   sections,
   previewRevealPrimed = false,
-  isMyTracksView = false,
   onBack,
-  onPressMyTracks,
+  onPressSavedTracks,
   onPressAllTracks,
+  onPressLoadingDebug,
   onPressRefresh,
   onPressRefetch,
   accountLabel,
@@ -221,28 +234,43 @@ export default function TracksOverviewScreen({
   onPreviewRevealPrimed,
   initialScrollOffset = 0,
   onScrollOffsetChange,
+  screenTitle,
+  extraContentTopPadding = 0,
   onPrepareStack,
   onPressStack,
 }: TracksOverviewScreenProps) {
+  const [fontsLoaded] = useFonts({
+    EurostileBoldItalic: require("../assets/fonts/Eurostile BoldItalic.ttf"),
+  });
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<Animated.ScrollView>(null);
   const hasRestoredScrollRef = useRef(false);
   const onPreviewRevealPrimedRef = useRef(onPreviewRevealPrimed);
   const [menuOpen, setMenuOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [brandBeltReady, setBrandBeltReady] = useState(false);
   const [readyFrontLayerIds, setReadyFrontLayerIds] = useState<Record<string, true>>({});
   const [revealOverviewFrontLayers, setRevealOverviewFrontLayers] = useState(previewRevealPrimed);
   const [showOverviewFrays, setShowOverviewFrays] = useState(previewRevealPrimed);
   const scrollY = useSharedValue(0);
   const menuProgress = useSharedValue(0);
+  const brandBeltOffset = useSharedValue(0);
   const gravity = useAnimatedSensor(SensorType.GRAVITY, { interval: 20 });
   const tiltX = useSharedValue(0);
   const tiltY = useSharedValue(0);
   const navTop = insets.top + NAV_TOP_PADDING + 24;
-  const GRID_TOP_OFFSET = 36;
-  const gridOffset = navTop - layout.megaBlockTop + GRID_TOP_OFFSET;
-  const gridEdgeWhitespace = Math.max(0, gridOffset);
-  const gridBottomWhitespace = gridEdgeWhitespace + 68;
+  const overviewTopInset = Math.round(layout.viewportHeight * -0.024);
+  const overviewBottomInset = Math.round(layout.viewportHeight * 0.08);
+  const contentTopPadding = navTop + NAV_BUTTON_SIZE + overviewTopInset + extraContentTopPadding;
+  const filterControlHeight = sortOptions?.length ? 8 + 34 : 0;
+  const refreshControlHeight = onPressRefresh ? 8 + NAV_BUTTON_SIZE + 16 : 0;
+  const brandRailTop = navTop + NAV_BUTTON_SIZE + filterControlHeight + refreshControlHeight;
+  const brandRailHeight = Math.max(1, layout.viewportHeight - brandRailTop);
+  const brandRailWidth = Math.round(layout.viewportWidth * 0.13);
+  const brandRailRightInset = Math.round(layout.viewportWidth * 0.0135);
+  const filterRightInset = Math.round(layout.viewportWidth * 0.008);
+  const brandMarkWidth = Math.max(Math.round(layout.viewportWidth * 3));
+  const brandTrackDistance = brandRailHeight + brandMarkWidth-350;
   const renderedRowCount = Math.max(1, Math.ceil(sections.length / SECTIONS_PER_ROW));
   const contentWorldHeight =
     layout.sectionHeight * renderedRowCount + layout.sectionGapY * Math.max(0, renderedRowCount - 1);
@@ -330,6 +358,28 @@ export default function TracksOverviewScreen({
     });
   }, [menuOpen, menuProgress]);
 
+  useEffect(() => {
+    setBrandBeltReady(false);
+    const startTimeout = setTimeout(() => {
+      brandBeltOffset.value = -brandTrackDistance;
+      setBrandBeltReady(true);
+      brandBeltOffset.value = withRepeat(
+        withTiming(0, {
+          duration: BRAND_BELT_DURATION_MS,
+          easing: Easing.linear,
+        }),
+        -1,
+        false
+      );
+    }, 0);
+
+    return () => {
+      clearTimeout(startTimeout);
+      cancelAnimation(brandBeltOffset);
+      brandBeltOffset.value = 0;
+    };
+  }, [brandBeltOffset, brandTrackDistance]);
+
   const handleFrontLayerReady = (stackId: string) => {
     setReadyFrontLayerIds((current) => {
       if (current[stackId]) {
@@ -347,7 +397,7 @@ export default function TracksOverviewScreen({
       const clampedX = Math.max(-7, Math.min(7, value.x));
       const clampedY = Math.max(-7, Math.min(7, value.y));
       tiltX.value = clampedX * 6.5;
-      const verticalStrength = clampedY > 0 ? 9.5 : 3.8;
+      const verticalStrength = clampedY > 0 ? 9.5 : 2.6;
       tiltY.value = clampedY * -verticalStrength;
     },
     [gravity, tiltX, tiltY]
@@ -364,6 +414,13 @@ export default function TracksOverviewScreen({
     opacity: menuProgress.value,
     transform: [{ translateX: (1 - menuProgress.value) * 32 }],
   }));
+  const brandBeltStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(brandBeltReady ? 1 : 0, {
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+    }),
+    transform: [{ translateY: brandBeltOffset.value }],
+  }));
 
   return (
     <View style={styles.root}>
@@ -375,8 +432,8 @@ export default function TracksOverviewScreen({
           {
             width: layout.viewportWidth,
             minHeight: layout.viewportHeight,
-            paddingBottom: gridBottomWhitespace,
-            transform: [{ translateY: gridOffset }],
+            paddingTop: contentTopPadding,
+            paddingBottom: overviewBottomInset,
           },
         ]}
         onScroll={handleScroll}
@@ -417,96 +474,117 @@ export default function TracksOverviewScreen({
       </Animated.ScrollView>
       {onBack ? (
         <Pressable hitSlop={20} onPress={onBack} style={[styles.backButton, { top: navTop }]}>
-          <Text style={styles.backArrow}>{"\u2190"}</Text>
+          <AppIcon name="angle-left" size={NAV_ICON_SIZE} />
         </Pressable>
       ) : null}
-      {isMyTracksView ? (
+      {screenTitle ? (
         <View style={[styles.screenTitleWrap, { top: navTop, height: NAV_BUTTON_SIZE }]}>
-          <Text style={styles.screenTitle}>My Tracks</Text>
+          <Text style={styles.screenTitle}>{screenTitle}</Text>
         </View>
       ) : null}
-      {!menuOpen ? (
-        <View style={[styles.topRightMenuWrap, { top: navTop }]}>
-          <Pressable onPress={() => setMenuOpen(true)} style={styles.hamburger}>
-            <Text style={styles.hamburgerText}>{"\u2630"}</Text>
-          </Pressable>
-          {sortOptions?.length ? (
-            <View style={styles.filterWrap}>
-              <Pressable onPress={() => setFilterMenuOpen((current) => !current)} style={styles.filterButton}>
-                <Text style={styles.filterText}>{"\u25BD"}</Text>
+      <View style={[styles.topRightMenuWrap, { top: navTop }]}>
+        <MenuToggleButton open={menuOpen} onPress={() => setMenuOpen((current) => !current)} size={NAV_ICON_SIZE} style={styles.hamburger} />
+        {!menuOpen ? (
+          <>
+            {sortOptions?.length ? (
+              <View style={[styles.filterWrap, { marginRight: filterRightInset }]}>
+                <Pressable onPress={() => setFilterMenuOpen((current) => !current)} style={styles.filterButton}>
+                  <AppIcon name="filter" size={24} />
+                </Pressable>
+                {filterMenuOpen ? (
+                  <View style={styles.filterSheet}>
+                    {sortOptions.map((option) => (
+                      <Pressable
+                        key={option.id}
+                        onPress={() => {
+                          setFilterMenuOpen(false);
+                          option.onPress();
+                        }}
+                        style={styles.menuItem}
+                      >
+                        <Text style={styles.menuItemText}>{option.label}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+            {onPressRefresh ? (
+              <Pressable onPress={onPressRefresh} style={styles.refreshButton}>
+                <AppIcon name="refresh" size={NAV_ICON_SIZE - 1} />
               </Pressable>
-              {filterMenuOpen ? (
-                <View style={styles.filterSheet}>
-                  {sortOptions.map((option) => (
-                    <Pressable
-                      key={option.id}
-                      onPress={() => {
-                        setFilterMenuOpen(false);
-                        option.onPress();
-                      }}
-                      style={styles.menuItem}
-                    >
-                      <Text style={styles.menuItemText}>{option.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-          {onPressRefresh ? (
-            <Pressable onPress={onPressRefresh} style={styles.refreshButton}>
-              <Text style={styles.refreshText}>{"\u21BB"}</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-      <Animated.View pointerEvents={menuOpen ? "auto" : "none"} style={[styles.menuPanel, menuPanelStyle]}>
-        <View style={[styles.menuPanelInner, { paddingTop: navTop }]}>
-          <View style={styles.menuPanelHeader}>
-            <Pressable onPress={() => setMenuOpen(false)} style={styles.hamburger}>
-              <Text style={styles.hamburgerText}>{"\u2715"}</Text>
-            </Pressable>
-          </View>
-          {accountLabel ? (
-            <View style={styles.menuHeader}>
-              <Text numberOfLines={1} style={styles.menuHeaderText}>
-                {accountLabel}
-              </Text>
-            </View>
-          ) : null}
-          <Pressable
-            onPress={() => {
+            ) : null}
+          </>
+        ) : null}
+      </View>
+      <NavigationMenu
+        open={menuOpen}
+        navTop={navTop}
+        onClose={() => setMenuOpen(false)}
+        animatedStyle={menuPanelStyle}
+        accountLabel={accountLabel}
+        items={[
+          {
+            key: "home",
+            label: "Home",
+            onPress: () => {
               setMenuOpen(false);
               onPressAllTracks?.();
-            }}
-            style={styles.menuItem}
-          >
-            <Text style={styles.menuItemText}>Home</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
+            },
+          },
+          {
+            key: "my-tracks",
+            label: "Saved Tracks",
+            onPress: () => {
               setMenuOpen(false);
-              onPressMyTracks?.();
-            }}
-            style={styles.menuItem}
-          >
-            <Text style={styles.menuItemText}>My Tracks</Text>
-          </Pressable>
-        </View>
-      </Animated.View>
+              onPressSavedTracks?.();
+            },
+          },
+          {
+            key: "loading-screen",
+            label: "Loading Screen",
+            onPress: () => {
+              setMenuOpen(false);
+              onPressLoadingDebug?.();
+            },
+          },
+        ]}
+      />
       <View
         style={[
-          styles.brandMark,
+          styles.brandRail,
           {
-            top: "50%",
-            right: -135,
+            top: brandRailTop,
+            height: brandRailHeight,
+            width: brandRailWidth,
+            right: brandRailRightInset,
           },
         ]}
       >
-        <Text numberOfLines={1} style={styles.brandMarkText}>
-          {"RECORDROOM\u00A9 RECORDROOM\u00A9 RECORDROOM\u00A9"}
-        </Text>
+        <Animated.View style={[styles.brandBelt, brandBeltStyle]}>
+          {[0, 1].map((index) => (
+            <View
+              key={index}
+              style={[
+                styles.brandMarkFloat,
+                { top: index * brandTrackDistance },
+              ]}
+            >
+              <View style={[styles.brandMarkBox, { width: brandMarkWidth }]}>
+                <Text
+                  style={[
+                    styles.brandMarkText,
+                    fontsLoaded ? styles.brandMarkTextEurostile : null,
+                  ]}
+                >
+                  {"RECORDROOM\u00A9                                                                RECORDROOM\u00A9                                                                RECORDROOM\u00A9 "}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </Animated.View>
       </View>
+      <ScreenDustOverlay />
     </View>
   );
 }
@@ -514,6 +592,7 @@ export default function TracksOverviewScreen({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    backgroundColor: "#FEFEFE",
   },
   viewport: {
     alignItems: "center",
@@ -540,37 +619,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  backArrow: {
-    color: "#111111",
-    fontSize: NAV_ICON_SIZE,
-    fontWeight: "600",
-    lineHeight: NAV_ICON_SIZE,
-  },
   topRightMenuWrap: {
     position: "absolute",
     right: NAV_RIGHT_INSET,
-    zIndex: NAV_Z_INDEX,
+    zIndex: NAV_Z_INDEX + 3,
     alignItems: "flex-end",
-  },
-  menuPanel: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: "50%",
-    zIndex: NAV_Z_INDEX + 2,
-    backgroundColor: "rgba(236,236,236,0.88)",
-    borderLeftWidth: 1,
-    borderLeftColor: "rgba(17,17,17,0.08)",
-  },
-  menuPanelInner: {
-    flex: 1,
-    paddingHorizontal: 18,
-    paddingBottom: 28,
-  },
-  menuPanelHeader: {
-    alignItems: "flex-end",
-    marginBottom: 18,
   },
   screenTitleWrap: {
     position: "absolute",
@@ -583,9 +636,9 @@ const styles = StyleSheet.create({
   },
   screenTitle: {
     color: "#111111",
-    fontSize: 14,
-    fontWeight: "600",
-    lineHeight: 14,
+    fontFamily: "Eurostile",
+    fontSize: 18,
+    lineHeight: 18,
   },
   refreshButton: {
     width: NAV_BUTTON_SIZE,
@@ -602,18 +655,9 @@ const styles = StyleSheet.create({
   filterButton: {
     width: 34,
     height: 34,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(17,17,17,0.16)",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.92)",
-  },
-  filterText: {
-    color: "#111111",
-    fontSize: 16,
-    fontWeight: "600",
-    lineHeight: 16,
+    backgroundColor: "transparent",
   },
   filterSheet: {
     marginTop: 8,
@@ -624,11 +668,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: "hidden",
   },
-  refreshText: {
-    fontSize: NAV_ICON_SIZE - 2,
+  menuItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  menuItemText: {
     color: "#111111",
-    lineHeight: NAV_ICON_SIZE - 2,
-    fontWeight: "600",
+    fontFamily: "Eurostile",
+    fontSize: 22,
+    lineHeight: 22,
   },
   hamburger: {
     width: NAV_BUTTON_SIZE,
@@ -636,11 +684,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "transparent",
-  },
-  hamburgerText: {
-    fontSize: NAV_ICON_SIZE,
-    color: "#111111",
-    lineHeight: NAV_ICON_SIZE,
   },
   menuSheet: {
     marginTop: 8,
@@ -651,36 +694,40 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: "hidden",
   },
-  menuHeader: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.08)",
-  },
-  menuHeaderText: {
-    color: "rgba(17,17,17,0.56)",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  menuItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  menuItemText: {
-    color: "#111111",
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  brandMark: {
+  brandRail: {
     position: "absolute",
-    transform: [{ translateY: 160 }, { rotate: "-90deg" }],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    overflow: "hidden",
+  },
+  brandBelt: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  brandMarkFloat: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  brandMarkBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+    transform: [{ rotate: "90deg" }],
   },
   brandMarkText: {
     color: "#111111",
-    fontSize: 10,
+    fontSize: 16,
     fontWeight: "500",
-    letterSpacing: 2,
+    letterSpacing: -0.4,
+    lineHeight: 20,
     includeFontPadding: false,
-    textAlign: "left",
+    textAlign: "center",
+  },
+  brandMarkTextEurostile: {
+    fontFamily: "EurostileBoldItalic",
+    fontWeight: "400",
   },
 });

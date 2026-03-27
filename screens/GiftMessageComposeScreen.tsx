@@ -77,17 +77,17 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     color: "rgba(17,17,17,0.54)",
+    fontFamily: "Eurostile",
     fontSize: 13,
-    fontWeight: "600",
     letterSpacing: 0.4,
     textTransform: "uppercase",
   },
   title: {
     marginTop: 10,
     color: "#111111",
+    fontFamily: "Eurostile",
     fontSize: 28,
     lineHeight: 34,
-    fontWeight: "600",
   },
   inputWrap: {
     flex: 1,
@@ -106,6 +106,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: "#FFFFFF",
     color: "#111111",
+    fontFamily: "Eurostile",
     fontSize: 18,
     lineHeight: 27,
   },
@@ -122,7 +123,7 @@ const styles = StyleSheet.create({
   },
   doneButtonText: {
     color: "#FFFFFF",
+    fontFamily: "Eurostile",
     fontSize: 16,
-    fontWeight: "600",
   },
 });

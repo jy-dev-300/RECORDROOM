@@ -1,7 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { runOnJS, useSharedValue } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createTrackStacksFromTracks } from "../data/trackStacks";
 import {
@@ -20,10 +26,15 @@ import {
 } from "../lib/navigationChrome";
 import GiftCreationPage from "../screens/GiftCreationPage";
 import GiftMessageComposeScreen from "../screens/GiftMessageComposeScreen";
-import MyTracksScreen from "../screens/MyTracksScreen";
+import SavedTracksScreen from "../screens/SavedTracksScreen";
 import type { Stack } from "../components/Stack";
 import PlayScreen from "../screens/PlayScreen";
 import TracksOverviewScreen from "../screens/TracksOverviewScreen";
+import RecordroomLogo from "../components/RecordroomLogo";
+import AppIcon from "../components/AppIcon";
+import MenuToggleButton from "../components/MenuToggleButton";
+import NavigationMenu from "../components/NavigationMenu";
+import ScreenDustOverlay from "../components/ScreenDustOverlay";
 import { loadDemoAccount, type DemoAccount } from "./demoAccountService";
 import {
   cacheRandomTracks,
@@ -34,8 +45,16 @@ import {
 import { loadSavedTracks, saveSavedTracks, type SavedTrackRecord } from "./deviceSavedTracks";
 import type { FeedTrack } from "./soundCloudRandomTracks";
 
-type RootScreen = "all_tracks" | "my_tracks";
-type MyTracksSortMode = "title" | "artist" | "color";
+type RootScreen = "all_tracks" | "saved_tracks" | "loading_debug";
+type SavedTracksSortMode = "title" | "artist" | "color";
+type TransitionDirection = "forward" | "back";
+type RouteSnapshot = {
+  rootScreen: RootScreen;
+  selectedStackIndex: number | null;
+  selectedProjects: Stack[] | null;
+  giftingProjects: Stack[] | null;
+  giftMessageComposerOpen: boolean;
+};
 
 function shuffleItems<T>(items: T[]) {
   const next = [...items];
@@ -74,6 +93,52 @@ function compareAlpha(left: string | null | undefined, right: string | null | un
   return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
 }
 
+function SlideInScene({
+  sceneKey,
+  width,
+  direction,
+  onTransitionComplete,
+  children,
+}: {
+  sceneKey: string;
+  width: number;
+  direction: TransitionDirection;
+  onTransitionComplete?: () => void;
+  children: React.ReactNode;
+}) {
+  const translateX = useSharedValue(width);
+  const opacity = useSharedValue(0.98);
+  const onTransitionCompleteRef = useRef(onTransitionComplete);
+
+  useEffect(() => {
+    onTransitionCompleteRef.current = onTransitionComplete;
+  }, [onTransitionComplete]);
+
+  useEffect(() => {
+    translateX.value = direction === "back" ? -width : width;
+    opacity.value = 0.98;
+    translateX.value = withTiming(0, {
+      duration: direction === "back" ? 100 : 250,
+      easing: Easing.out(Easing.cubic),
+    }, (finished) => {
+      if (finished && onTransitionCompleteRef.current) {
+        runOnJS(onTransitionCompleteRef.current)();
+      }
+    });
+    opacity.value = withTiming(1, {
+      duration: direction === "back" ? 100 : 220,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [direction, opacity, sceneKey, translateX, width]);
+
+  const sceneStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  return <Animated.View style={[styles.sceneRoot, sceneStyle]}>{children}</Animated.View>;
+}
+
 export default function ScreenFlowControl() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -89,12 +154,16 @@ export default function ScreenFlowControl() {
   const [feedTracks, setFeedTracks] = useState<FeedTrack[]>([]);
   const [overviewPreviewPrimed, setOverviewPreviewPrimed] = useState(false);
   const [feedReady, setFeedReady] = useState(false);
+  const [bootAnimationComplete, setBootAnimationComplete] = useState(false);
   const [overviewScrollOffset, setOverviewScrollOffset] = useState(0);
-  const [myTracksScrollOffset, setMyTracksScrollOffset] = useState(0);
+  const [savedTracksScrollOffset, setSavedTracksScrollOffset] = useState(0);
   const [overviewStackShuffleVersion, setOverviewStackShuffleVersion] = useState(0);
-  const [myTracksSortMode, setMyTracksSortMode] = useState<MyTracksSortMode>("title");
-  const screenFade = useRef(new Animated.Value(1)).current;
-  const menuPanelProgress = useRef(new Animated.Value(0)).current;
+  const [savedTracksSortMode, setSavedTracksSortMode] = useState<SavedTracksSortMode>("title");
+  const [loadingDebugSpinEnabled, setLoadingDebugSpinEnabled] = useState(true);
+  const [transitionDirection, setTransitionDirection] = useState<TransitionDirection>("forward");
+  const [giftIntroReadyRouteKey, setGiftIntroReadyRouteKey] = useState<string | null>(null);
+  const menuPanelProgress = useSharedValue(0);
+  const routeHistoryRef = useRef<RouteSnapshot[]>([]);
 
   const backGestureTriggered = useSharedValue(false);
 
@@ -257,14 +326,14 @@ export default function ScreenFlowControl() {
       })
       .filter((value): value is (typeof activeTrackStacks)[number] => value != null);
 
-    if (myTracksSortMode === "artist") {
+    if (savedTracksSortMode === "artist") {
       return [...stacks].sort((left, right) =>
         compareAlpha(left.projects[0]?.artistName, right.projects[0]?.artistName) ||
         compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
       );
     }
 
-    if (myTracksSortMode === "color") {
+    if (savedTracksSortMode === "color") {
       return [...stacks].sort((left, right) =>
         compareAlpha(left.projects[0]?.color, right.projects[0]?.color) ||
         compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
@@ -274,7 +343,7 @@ export default function ScreenFlowControl() {
     return [...stacks].sort((left, right) =>
       compareAlpha(left.projects[0]?.title, right.projects[0]?.title)
     );
-  }, [myTracksSortMode, savedTracksSet]);
+  }, [savedTracksSortMode, savedTracksSet]);
 
   const myTrackSections = useMemo(
     () => chunkItems(savedTrackStacks, STACKS_PER_SECTION),
@@ -285,37 +354,54 @@ export default function ScreenFlowControl() {
   const navTop = insets.top;
   const selectedStack = selectedProjects ?? (selectedStackIndex != null ? activeTrackStacks[selectedStackIndex] ?? null : null)?.projects ?? null;
   const giftingStack = giftingProjects;
-  const routeKey = useMemo(() => {
-    if (giftMessageComposerOpen) return "gift-message";
-    if (giftingProjects != null) return "gift";
-    if (selectedStack != null) return `detail-${selectedStack[0]?.id ?? "stack"}`;
-    return rootScreen;
-  }, [giftMessageComposerOpen, giftingProjects, rootScreen, selectedStack]);
+  const activeRouteKey = `${rootScreen}:${selectedStack?.[0]?.id ?? "none"}:${giftingProjects?.[0]?.id ?? "none"}:${giftMessageComposerOpen ? "composer" : "base"}`;
 
-  useLayoutEffect(() => {
-    screenFade.setValue(1);
-    const timeout = setTimeout(() => {
-      const animation = Animated.timing(screenFade, {
-        toValue: 0,
-        duration: 100,
-        useNativeDriver: true,
-      });
-      animation.start();
-    }, 90);
+  const captureRouteSnapshot = (): RouteSnapshot => ({
+    rootScreen,
+    selectedStackIndex,
+    selectedProjects,
+    giftingProjects,
+    giftMessageComposerOpen,
+  });
 
-    return () => {
-      clearTimeout(timeout);
-      screenFade.stopAnimation();
-    };
-  }, [routeKey, screenFade]);
+  const applyRouteSnapshot = (snapshot: RouteSnapshot) => {
+    setMenuOpen(false);
+    setRootScreen(snapshot.rootScreen);
+    setSelectedStackIndex(snapshot.selectedStackIndex);
+    setSelectedProjects(snapshot.selectedProjects);
+    setGiftingProjects(snapshot.giftingProjects);
+    setGiftMessageComposerOpen(snapshot.giftMessageComposerOpen);
+  };
+
+  const navigateToSnapshot = (snapshot: RouteSnapshot) => {
+    setTransitionDirection("forward");
+    routeHistoryRef.current.push(captureRouteSnapshot());
+    applyRouteSnapshot(snapshot);
+  };
 
   useEffect(() => {
-    Animated.timing(menuPanelProgress, {
-      toValue: menuOpen ? 1 : 0,
+    menuPanelProgress.value = withTiming(menuOpen ? 1 : 0, {
       duration: 220,
-      useNativeDriver: true,
-    }).start();
+      easing: Easing.out(Easing.cubic),
+    });
   }, [menuOpen, menuPanelProgress]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [activeRouteKey]);
+
+  useEffect(() => {
+    setGiftIntroReadyRouteKey(null);
+  }, [activeRouteKey]);
+
+  const menuPanelStyle = useAnimatedStyle(() => ({
+    opacity: menuPanelProgress.value,
+    transform: [
+      {
+        translateX: 36 * (1 - menuPanelProgress.value),
+      },
+    ],
+  }));
 
   const handleSaveProject = (project: Stack) => {
     // Saved tracks are tracked by project id so the same item stays stable across screens.
@@ -359,12 +445,6 @@ export default function ScreenFlowControl() {
     );
   };
 
-  const handleBackFromDetail = () => {
-    setMenuOpen(false);
-    setSelectedStackIndex(null);
-    setSelectedProjects(null);
-  };
-
   const refetchFromGenerated = async () => {
     const previousTracks = feedTracks;
 
@@ -392,35 +472,20 @@ export default function ScreenFlowControl() {
     }
   };
 
-  const handleBackFromGift = () => {
-    setGiftMessageComposerOpen(false);
-    setGiftingProjects(null);
-  };
-
   const handleGlobalBack = () => {
-    // Back behavior is centralized here so gestures and buttons follow the same rules.
-    if (giftingProjects != null) {
-      if (giftMessageComposerOpen) {
-        setGiftMessageComposerOpen(false);
-        return;
-      }
-      handleBackFromGift();
-      return;
-    }
-
-    if (selectedStack != null) {
-      handleBackFromDetail();
-      return;
-    }
-
-    if (rootScreen === "my_tracks") {
-      setMenuOpen(false);
-      setRootScreen("all_tracks");
+    // Back behavior restores the last visited route instead of a fixed destination.
+    const previousRoute = routeHistoryRef.current.pop();
+    if (previousRoute) {
+      setTransitionDirection("back");
+      applyRouteSnapshot(previousRoute);
     }
   };
 
   const canGoBack =
-    giftingProjects != null || selectedStack != null || rootScreen === "my_tracks";
+    giftingProjects != null ||
+    selectedStack != null ||
+    rootScreen === "saved_tracks" ||
+    rootScreen === "loading_debug";
 
   const globalBackGesture = Gesture.Pan()
     .maxPointers(1)
@@ -450,82 +515,83 @@ export default function ScreenFlowControl() {
 
     // Once a stack is selected, the flow switches from overview mode into the single-stack experience.
     return (
+      <SlideInScene
+        key={`${activeRouteKey}:${transitionDirection}`}
+        sceneKey={activeRouteKey}
+        width={width}
+        direction={transitionDirection}
+        onTransitionComplete={() => {
+          if (giftingProjects != null && !giftMessageComposerOpen) {
+            setTimeout(() => {
+              setGiftIntroReadyRouteKey(activeRouteKey);
+            }, 200);
+          }
+        }}
+      >
       <View style={styles.detailPage}>
+        <ScreenDustOverlay />
         <View pointerEvents="box-none" style={styles.detailNavLayer}>
-          {giftingProjects == null ? (
-            <GestureDetector gesture={globalBackGesture}>
-              <View style={styles.detailBackGestureEdge} />
-            </GestureDetector>
-          ) : null}
+          <GestureDetector gesture={globalBackGesture}>
+            <View style={styles.detailBackGestureEdge} />
+          </GestureDetector>
           <Pressable
             hitSlop={20}
-            onPress={
-              giftMessageComposerOpen
-                ? () => setGiftMessageComposerOpen(false)
-                : giftingProjects != null
-                  ? handleBackFromGift
-                  : handleBackFromDetail
-            }
+            onPress={handleGlobalBack}
             style={[styles.backButton, { top: navTop }]}
           >
-            <Text style={styles.backArrow}>{"\u2190"}</Text>
+            <AppIcon name="angle-left" size={NAV_ICON_SIZE} />
           </Pressable>
-          {!menuOpen ? (
-            <View style={[styles.topRightMenuWrap, { top: navTop }]}>
-              <Pressable onPress={() => setMenuOpen(true)} style={styles.hamburger}>
-                <Text style={styles.hamburgerText}>{"\u2630"}</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          <Animated.View
-            pointerEvents={menuOpen ? "auto" : "none"}
-            style={[
-              styles.menuPanel,
+          <View style={[styles.topRightMenuWrap, { top: navTop }]}>
+            <MenuToggleButton open={menuOpen} onPress={() => setMenuOpen((current) => !current)} size={NAV_ICON_SIZE} style={styles.hamburger} />
+          </View>
+          <NavigationMenu
+            open={menuOpen}
+            navTop={navTop}
+            onClose={() => setMenuOpen(false)}
+            animatedStyle={menuPanelStyle}
+            items={[
               {
-                opacity: menuPanelProgress,
-                transform: [
-                  {
-                    translateX: menuPanelProgress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [36, 0],
-                    }),
-                  },
-                ],
+                key: "home",
+                label: "Home",
+                onPress: () => {
+                  routeHistoryRef.current = [];
+                  applyRouteSnapshot({
+                    rootScreen: "all_tracks",
+                    selectedStackIndex: null,
+                    selectedProjects: null,
+                    giftingProjects: null,
+                    giftMessageComposerOpen: false,
+                  });
+                },
+              },
+              {
+                key: "saved-tracks",
+                label: "Saved Tracks",
+                onPress: () => {
+                  navigateToSnapshot({
+                    rootScreen: "saved_tracks",
+                    selectedStackIndex: null,
+                    selectedProjects: null,
+                    giftingProjects: null,
+                    giftMessageComposerOpen: false,
+                  });
+                },
+              },
+              {
+                key: "loading-screen",
+                label: "Loading Screen",
+                onPress: () => {
+                  navigateToSnapshot({
+                    rootScreen: "loading_debug",
+                    selectedStackIndex: null,
+                    selectedProjects: null,
+                    giftingProjects: null,
+                    giftMessageComposerOpen: false,
+                  });
+                },
               },
             ]}
-          >
-            <View style={[styles.menuPanelInner, { paddingTop: navTop }]}>
-              <View style={styles.menuPanelHeader}>
-                <Pressable onPress={() => setMenuOpen(false)} style={styles.hamburger}>
-                  <Text style={styles.hamburgerText}>{"\u2715"}</Text>
-                </Pressable>
-              </View>
-              <Pressable
-                onPress={() => {
-                  setMenuOpen(false);
-                  setSelectedStackIndex(null);
-                  setSelectedProjects(null);
-                  setGiftingProjects(null);
-                  setRootScreen("all_tracks");
-                }}
-                style={styles.menuItem}
-              >
-                <Text style={styles.menuItemText}>Home</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setMenuOpen(false);
-                  setSelectedStackIndex(null);
-                  setSelectedProjects(null);
-                  setGiftingProjects(null);
-                  setRootScreen("my_tracks");
-                }}
-                style={styles.menuItem}
-              >
-                <Text style={styles.menuItemText}>My Tracks</Text>
-              </Pressable>
-            </View>
-          </Animated.View>
+          />
         </View>
         <View style={styles.detailCanvas}>
           {giftingProjects != null ? (
@@ -538,16 +604,31 @@ export default function ScreenFlowControl() {
             ) : (
               <GiftCreationPage
                 giftMessage={giftMessage}
-                onPressComposeMessage={() => setGiftMessageComposerOpen(true)}
+                startIntro={giftIntroReadyRouteKey === activeRouteKey}
+                onPressComposeMessage={() =>
+                  navigateToSnapshot({
+                    rootScreen,
+                    selectedStackIndex,
+                    selectedProjects,
+                    giftingProjects,
+                    giftMessageComposerOpen: true,
+                  })
+                }
                 projects={giftingStack ?? []}
               />
             )
           ) : (
             <PlayScreen
-              onPressGift={(project) => {
+              onPressGift={async (project) => {
                 setGiftMessage("");
-                setGiftMessageComposerOpen(false);
-                setGiftingProjects([project]);
+                await prefetchStackAssets([project]);
+                navigateToSnapshot({
+                  rootScreen,
+                  selectedStackIndex,
+                  selectedProjects,
+                  giftingProjects: [project],
+                  giftMessageComposerOpen: false,
+                });
               }}
               onPressRemove={handleConfirmRemoveProject}
               onPressSave={handleSaveProject}
@@ -559,58 +640,115 @@ export default function ScreenFlowControl() {
             />
           )}
         </View>
-        <Animated.View pointerEvents="none" style={[styles.transitionOverlay, { opacity: screenFade }]} />
+      </View>
+      </SlideInScene>
+    );
+  }
+
+  if (!feedReady || !bootAnimationComplete) {
+    return (
+      <View style={styles.bootPage}>
+        <ScreenDustOverlay />
+        <View style={styles.bootMarkWrap}>
+          <RecordroomLogo
+            animateRecordOnMount
+            onFirstCycleComplete={() => setBootAnimationComplete(true)}
+          />
+        </View>
+        <View style={styles.loadingLabelWrap}>
+          <Text style={styles.loadingLabelText}>Loading...</Text>
+        </View>
       </View>
     );
   }
 
-  if (!feedReady) {
+  if (rootScreen === "loading_debug") {
     return (
       <View style={styles.bootPage}>
+        <ScreenDustOverlay />
+        <Pressable hitSlop={20} onPress={handleGlobalBack} style={[styles.backButton, { top: navTop }]}>
+          <AppIcon name="angle-left" size={NAV_ICON_SIZE} />
+        </Pressable>
         <View style={styles.bootMarkWrap}>
-          <Text style={styles.bootMark}>{"RECORDROOM\u00A9"}</Text>
+          <RecordroomLogo animateRecordOnMount={loadingDebugSpinEnabled} />
+          <Pressable
+            onPress={() => setLoadingDebugSpinEnabled((current) => !current)}
+            style={styles.loadingDebugButton}
+          >
+            <Text style={styles.loadingDebugButtonText}>
+              {loadingDebugSpinEnabled ? "Stop Spin" : "Start Spin"}
+            </Text>
+          </Pressable>
         </View>
       </View>
     );
   }
 
   return (
+    <SlideInScene
+      key={`${activeRouteKey}:${transitionDirection}`}
+      sceneKey={activeRouteKey}
+      width={width}
+      direction={transitionDirection}
+    >
     <View style={styles.pageRoot}>
-      {rootScreen === "my_tracks" ? (
-        <MyTracksScreen
+      {rootScreen === "saved_tracks" ? (
+        <SavedTracksScreen
           accountLabel={demoAccount ? `${demoAccount.displayName} · ${demoAccount.username}` : undefined}
           layout={layout}
           sections={myTrackSections}
           previewRevealPrimed={overviewPreviewPrimed}
-          initialScrollOffset={myTracksScrollOffset}
-          onBack={() => {
-            setRootScreen("all_tracks");
+          initialScrollOffset={savedTracksScrollOffset}
+          onBack={handleGlobalBack}
+          onPressAllTracks={() => {
+            routeHistoryRef.current = [];
+            applyRouteSnapshot({
+              rootScreen: "all_tracks",
+              selectedStackIndex: null,
+              selectedProjects: null,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
+          }}
+          onPressLoadingDebug={() => {
+            navigateToSnapshot({
+              rootScreen: "loading_debug",
+              selectedStackIndex: null,
+              selectedProjects: null,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
           }}
           onPreviewRevealPrimed={() => setOverviewPreviewPrimed(true)}
           sortOptions={[
             {
               id: "sort-title",
               label: "Sort: Title",
-              onPress: () => setMyTracksSortMode("title"),
+              onPress: () => setSavedTracksSortMode("title"),
             },
             {
               id: "sort-artist",
               label: "Sort: Artist",
-              onPress: () => setMyTracksSortMode("artist"),
+              onPress: () => setSavedTracksSortMode("artist"),
             },
             {
               id: "sort-color",
               label: "Sort: Color",
-              onPress: () => setMyTracksSortMode("color"),
+              onPress: () => setSavedTracksSortMode("color"),
             },
           ]}
-          onScrollOffsetChange={setMyTracksScrollOffset}
+          onScrollOffsetChange={setSavedTracksScrollOffset}
           onPressStack={async (sectionIndex, stackIndex) => {
             const savedStack = myTrackSections[sectionIndex]?.[stackIndex];
             if (!savedStack) return;
             void prefetchStackAssets(savedStack.projects);
-            setSelectedProjects(savedStack.projects);
-            setSelectedStackIndex(null);
+            navigateToSnapshot({
+              rootScreen,
+              selectedStackIndex: null,
+              selectedProjects: savedStack.projects,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
           }}
         />
       ) : (
@@ -636,24 +774,56 @@ export default function ScreenFlowControl() {
           onPressStack={async (sectionIndex, stackIndex) => {
             const selectedStack = allTrackSections[sectionIndex]?.[stackIndex];
             if (!selectedStack) return;
-            setSelectedProjects(selectedStack.projects);
-            setSelectedStackIndex(null);
+            navigateToSnapshot({
+              rootScreen,
+              selectedStackIndex: null,
+              selectedProjects: selectedStack.projects,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
           }}
-          onPressMyTracks={() => {
-            setMenuOpen(false);
-            setRootScreen("my_tracks");
+          onPressSavedTracks={() => {
+            navigateToSnapshot({
+              rootScreen: "saved_tracks",
+              selectedStackIndex: null,
+              selectedProjects: null,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
+          }}
+          onPressLoadingDebug={() => {
+            navigateToSnapshot({
+              rootScreen: "loading_debug",
+              selectedStackIndex: null,
+              selectedProjects: null,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
+          }}
+          onPressAllTracks={() => {
+            routeHistoryRef.current = [];
+            applyRouteSnapshot({
+              rootScreen: "all_tracks",
+              selectedStackIndex: null,
+              selectedProjects: null,
+              giftingProjects: null,
+              giftMessageComposerOpen: false,
+            });
           }}
         />
       )}
       <GestureDetector gesture={globalBackGesture}>
         <View style={styles.globalBackEdge} />
       </GestureDetector>
-      <Animated.View pointerEvents="none" style={[styles.transitionOverlay, { opacity: screenFade }]} />
     </View>
+    </SlideInScene>
   );
 }
 
 const styles = StyleSheet.create({
+  sceneRoot: {
+    flex: 1,
+  },
   pageRoot: {
     flex: 1,
   },
@@ -666,11 +836,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  bootMark: {
+  loadingLabelWrap: {
+    position: "absolute",
+    left: 18,
+    bottom: 22,
+  },
+  loadingLabelText: {
+    color: "rgba(17,17,17,0.56)",
+    fontFamily: "Eurostile",
+    fontSize: 14,
+    lineHeight: 14,
+  },
+  loadingDebugButton: {
+    marginTop: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(17,17,17,0.16)",
+    backgroundColor: "rgba(255,255,255,0.9)",
+  },
+  loadingDebugButtonText: {
     color: "#111111",
-    fontSize: 48,
-    fontWeight: "600",
-    letterSpacing: 1,
+    fontFamily: "Eurostile",
+    fontSize: 13,
   },
   detailPage: {
     flex: 1,
@@ -713,47 +902,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  backArrow: {
-    color: "#111111",
-    fontSize: NAV_ICON_SIZE,
-    fontWeight: "600",
-    lineHeight: NAV_ICON_SIZE,
-  },
   detailCanvas: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
-  transitionOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#FEFEFE",
-    zIndex: 120,
-  },
   topRightMenuWrap: {
     position: "absolute",
     right: NAV_RIGHT_INSET,
-    zIndex: NAV_Z_INDEX,
+    zIndex: NAV_Z_INDEX + 3,
     alignItems: "flex-end",
-  },
-  menuPanel: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: "50%",
-    zIndex: NAV_Z_INDEX + 2,
-    backgroundColor: "rgba(236,236,236,0.88)",
-    borderLeftWidth: 1,
-    borderLeftColor: "rgba(17,17,17,0.08)",
-  },
-  menuPanelInner: {
-    flex: 1,
-    paddingHorizontal: 18,
-    paddingBottom: 28,
-  },
-  menuPanelHeader: {
-    alignItems: "flex-end",
-    marginBottom: 18,
   },
   hamburger: {
     width: NAV_BUTTON_SIZE,
@@ -761,11 +919,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "transparent",
-  },
-  hamburgerText: {
-    fontSize: NAV_ICON_SIZE,
-    color: "#111111",
-    lineHeight: NAV_ICON_SIZE,
   },
   menuSheet: {
     marginTop: 8,
@@ -775,14 +928,5 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.12)",
     borderRadius: 10,
     overflow: "hidden",
-  },
-  menuItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  menuItemText: {
-    color: "#111111",
-    fontSize: 15,
-    fontWeight: "500",
   },
 });

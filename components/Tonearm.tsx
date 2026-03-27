@@ -47,6 +47,11 @@ const styles = StyleSheet.create({
     height: "58%",
     right: 0,
     top: "26%",
+    opacity: 1,
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   top: {
     position: "absolute",
@@ -54,5 +59,10 @@ const styles = StyleSheet.create({
     height: "100%",
     right: "-2%",
     top: "-6%",
+    opacity: 1,
+    shadowColor: "#000000",
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
 });

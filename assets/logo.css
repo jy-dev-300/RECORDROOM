@@ -1,0 +1,16 @@
+.recordroom-logo {
+  display: inline-block;
+  width: 374px;
+  height: 147px;
+  background-image: url("./logo.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.recordroom-logo--fluid {
+  width: 100%;
+  max-width: 374px;
+  aspect-ratio: 374 / 147;
+  height: auto;
+}

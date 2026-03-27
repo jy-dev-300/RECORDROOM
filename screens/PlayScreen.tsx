@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Easing,
+  Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -20,6 +22,7 @@ import StackComponent, {
   STACK_LAYER_OFFSET,
   type Stack,
 } from "../components/Stack";
+import AppIcon from "../components/AppIcon";
 import SpotifyEmbedBridge from "../components/SpotifyEmbedBridge";
 import {
   DISC_LABEL_SIZE_RATIO,
@@ -45,7 +48,7 @@ type PlayScreenProps = {
 
 const PLAYER_SIZE = 360;
 const PLAYER_MENU_ITEM_WIDTH = PLAYER_SIZE + 72;
-const PLAYBACK_DURATION_SECONDS = 60;
+const FALLBACK_PLAYBACK_DURATION_SECONDS = 60;
 const DISC_DEGREES_PER_SECOND = 720;
 const CUSTOM_PLAYER_SOURCE = require("../assets/player.jpeg");
 const VINYL_DISC_SOURCE = require("../assets/vinyl2.png");
@@ -74,9 +77,20 @@ export default function PlayScreen({
   const artworkSource = activeProject?.media ? { uri: activeProject.media } : null;
   const [spotifyMatch, setSpotifyMatch] = useState<SpotifyTrackMatch | null>(null);
   const [spotifyMatchProjectId, setSpotifyMatchProjectId] = useState<string | null>(null);
+  const [spotifyDurationSeconds, setSpotifyDurationSeconds] = useState<number | null>(null);
+  const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
+  const [spotifyPlaybackCommand, setSpotifyPlaybackCommand] = useState<{
+    id: number;
+    type: "play" | "pause" | "resume";
+  } | null>(null);
+  const [pendingAutoPlayProjectId, setPendingAutoPlayProjectId] = useState<string | null>(null);
+  const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSeconds, setPlaybackSeconds] = useState(0);
   const playbackSecondsRef = useRef(0);
+  const isPlayingRef = useRef(false);
+  const spotifyPositionSecondsRef = useRef(0);
+  const spotifyPositionTimestampRef = useRef(0);
   const discRotationRef = useRef(0);
   const discRotationValue = useRef(new Animated.Value(0)).current;
   const tonearmTopProgress = useRef(new Animated.Value(0)).current;
@@ -91,10 +105,29 @@ export default function PlayScreen({
     setPlaybackSeconds(seconds);
   };
 
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   const setDiscRotation = (degrees: number) => {
     discRotationRef.current = degrees;
     discRotationValue.setValue(degrees);
   };
+
+  const effectiveTotalSeconds =
+    spotifyDurationSeconds ?? FALLBACK_PLAYBACK_DURATION_SECONDS;
+  const isWaitingForSpotifyDuration = Boolean(spotifyMatch?.uri) && spotifyDurationSeconds == null;
+  const isWaitingForSpotifySeek = Boolean(spotifyMatch?.uri) && pendingSeekSeconds != null;
+  const isPreviewUnavailable =
+    Boolean(activeProject?.title) &&
+    spotifyMatchProjectId === activeProject?.id &&
+    spotifyMatch == null;
+  const displayedTotalSeconds =
+    isWaitingForSpotifyDuration || isPreviewUnavailable ? 0 : effectiveTotalSeconds;
+  const shouldShowEmptyTime =
+    !hasPlaybackStarted || isWaitingForSpotifyDuration || isPreviewUnavailable;
+  const emptyTimeMode =
+    isPreviewUnavailable || !activeProject?.title ? "both" : "right-only";
 
   useEffect(() => {
     if (!isPlaying) {
@@ -102,18 +135,38 @@ export default function PlayScreen({
     }
 
     const interval = setInterval(() => {
-      const currentSeconds = playbackSecondsRef.current;
-      const nextSeconds = Math.min(PLAYBACK_DURATION_SECONDS, currentSeconds + 0.05);
-      applyPlaybackSeconds(nextSeconds);
-      setDiscRotation(discRotationRef.current + 0.05 * DISC_DEGREES_PER_SECOND);
+      if (isWaitingForSpotifySeek) {
+        return;
+      }
 
-      if (nextSeconds >= PLAYBACK_DURATION_SECONDS) {
+      const nextSeconds = spotifyMatch?.uri
+        ? Math.min(
+            effectiveTotalSeconds,
+            spotifyPositionSecondsRef.current +
+              Math.max(0, (Date.now() - spotifyPositionTimestampRef.current) / 1000)
+          )
+        : Math.min(effectiveTotalSeconds, playbackSecondsRef.current + 0.05);
+      applyPlaybackSeconds(nextSeconds);
+
+      if (!spotifyMatch?.uri && nextSeconds >= effectiveTotalSeconds) {
         setIsPlaying(false);
       }
     }, 50);
 
     return () => clearInterval(interval);
-  }, [isPlaying]);
+  }, [effectiveTotalSeconds, isPlaying, isWaitingForSpotifySeek, spotifyMatch?.uri]);
+
+  useEffect(() => {
+    if (!isPlaying || isWaitingForSpotifySeek) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setDiscRotation(discRotationRef.current + 0.05 * DISC_DEGREES_PER_SECOND);
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [isPlaying, isWaitingForSpotifySeek]);
 
   useEffect(() => {
     Animated.timing(tonearmTopProgress, {
@@ -129,29 +182,129 @@ export default function PlayScreen({
   }, [initialProjectIndex]);
 
   useEffect(() => {
+    const shouldContinuePlayback = isPlayingRef.current;
+
+    queueSpotifyPlaybackCommand("pause");
     setIsPlaying(false);
     applyPlaybackSeconds(0);
     setDiscRotation(0);
+    setSpotifyMatch(null);
+    setSpotifyMatchProjectId(null);
+    setSpotifyDurationSeconds(null);
+    setPendingSeekSeconds(null);
+    setHasPlaybackStarted(false);
+    setPendingAutoPlayProjectId(shouldContinuePlayback ? activeProject?.id ?? null : null);
+    spotifyPositionSecondsRef.current = 0;
+    spotifyPositionTimestampRef.current = 0;
   }, [activeProject?.id]);
 
+  useEffect(() => {
+    if (!activeProject?.id || !activeProject.title) {
+      setSpotifyMatch(null);
+      setSpotifyMatchProjectId(activeProject?.id ?? null);
+      return;
+    }
+
+    if (spotifyMatchProjectId === activeProject.id) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    void fetchSpotifyTrackMatch({
+      title: activeProject.title,
+      artistName: activeProject.artistName,
+      releaseYear: activeProject.releaseYear,
+    })
+      .then((match) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setSpotifyMatch(match);
+        setSpotifyMatchProjectId(activeProject.id);
+        if (pendingAutoPlayProjectId === activeProject.id) {
+          setPendingAutoPlayProjectId(null);
+          if (match?.uri) {
+            spotifyPositionSecondsRef.current = 0;
+            spotifyPositionTimestampRef.current = Date.now();
+            setHasPlaybackStarted(true);
+            setIsPlaying(true);
+            queueSpotifyPlaybackCommand("play");
+          }
+        }
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setSpotifyMatch(null);
+        setSpotifyMatchProjectId(activeProject.id);
+        if (pendingAutoPlayProjectId === activeProject.id) {
+          setPendingAutoPlayProjectId(null);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    activeProject?.artistName,
+    activeProject?.id,
+    activeProject?.releaseYear,
+    activeProject?.title,
+    pendingAutoPlayProjectId,
+    spotifyMatchProjectId,
+  ]);
+
+  const queueSpotifyPlaybackCommand = (type: "play" | "pause" | "resume") => {
+    setSpotifyPlaybackCommand((current) => ({
+      id: (current?.id ?? 0) + 1,
+      type,
+    }));
+  };
+
+  const showUnavailablePreviewAlert = () => {
+    Alert.alert("Preview unavailable", "This song is currently unavailable for preview.");
+  };
+
   const handleTogglePlayback = async () => {
-    if (playbackSecondsRef.current >= PLAYBACK_DURATION_SECONDS) {
+    if (playbackSecondsRef.current >= effectiveTotalSeconds) {
       applyPlaybackSeconds(0);
-      setDiscRotation(0);
+      spotifyPositionSecondsRef.current = 0;
+      spotifyPositionTimestampRef.current = Date.now();
+      if (spotifyMatch?.uri) {
+        setPendingSeekSeconds(0);
+      }
     }
 
     if (isPlaying) {
       setIsPlaying(false);
+      queueSpotifyPlaybackCommand("pause");
       return;
     }
 
     if (!activeProject?.title) {
+      setHasPlaybackStarted(true);
       setIsPlaying(true);
       return;
     }
 
     if (spotifyMatchProjectId === activeProject.id) {
-      setIsPlaying(Boolean(spotifyMatch?.uri));
+      setHasPlaybackStarted(true);
+      if (spotifyMatch?.uri) {
+        spotifyPositionTimestampRef.current = Date.now();
+        setIsPlaying(true);
+        queueSpotifyPlaybackCommand(
+          playbackSecondsRef.current > 0 &&
+            playbackSecondsRef.current < effectiveTotalSeconds
+            ? "resume"
+            : "play"
+        );
+      } else {
+        showUnavailablePreviewAlert();
+      }
       return;
     }
 
@@ -163,10 +316,24 @@ export default function PlayScreen({
       });
       setSpotifyMatch(match);
       setSpotifyMatchProjectId(activeProject.id);
-      setIsPlaying(Boolean(match?.uri));
+      setSpotifyDurationSeconds(null);
+      setHasPlaybackStarted(true);
+      if (match?.uri) {
+        spotifyPositionSecondsRef.current = playbackSecondsRef.current;
+        spotifyPositionTimestampRef.current = Date.now();
+        setIsPlaying(true);
+        setSpotifyPlaybackCommand((current) => ({
+          id: (current?.id ?? 0) + 1,
+          type: "play",
+        }));
+      } else {
+        setIsPlaying(false);
+        showUnavailablePreviewAlert();
+      }
     } catch {
       setSpotifyMatch(null);
       setSpotifyMatchProjectId(activeProject.id);
+      setSpotifyDurationSeconds(null);
       setIsPlaying(false);
     }
   };
@@ -251,9 +418,52 @@ export default function PlayScreen({
   return (
     <View style={styles.page}>
       <SpotifyEmbedBridge
-        debugVisible
-        shouldPlay={isPlaying && Boolean(spotifyMatch?.uri)}
+        key={activeProject?.id ?? "no-active-project"}
+        loadIdentity={activeProject?.id ?? null}
+        playbackCommand={spotifyPlaybackCommand}
+        seekToSeconds={pendingSeekSeconds}
         spotifyUri={spotifyMatch?.uri ?? null}
+        onPlaybackUpdate={({ durationSeconds, positionSeconds, isPaused }) => {
+          if (
+            !isPlaying &&
+            !hasPlaybackStarted &&
+            pendingSeekSeconds == null &&
+            positionSeconds > 0
+          ) {
+            return;
+          }
+
+          if (durationSeconds > 0) {
+            setSpotifyDurationSeconds(durationSeconds);
+          }
+          const resolvedDuration =
+            durationSeconds > 0 ? durationSeconds : effectiveTotalSeconds;
+          const clampedPosition = Math.max(
+            0,
+            Math.min(resolvedDuration, positionSeconds)
+          );
+          if (pendingSeekSeconds != null) {
+            const seekDelta = Math.abs(clampedPosition - pendingSeekSeconds);
+            if (seekDelta > 0.35) {
+              return;
+            }
+          }
+          if (clampedPosition > 0 || !isPaused) {
+            setHasPlaybackStarted(true);
+          }
+          spotifyPositionSecondsRef.current = clampedPosition;
+          spotifyPositionTimestampRef.current = Date.now();
+          applyPlaybackSeconds(clampedPosition);
+          if (pendingSeekSeconds != null) {
+            const seekDelta = Math.abs(clampedPosition - pendingSeekSeconds);
+            if (seekDelta <= 0.35) {
+              setPendingSeekSeconds(null);
+            }
+          }
+          if (isPaused && resolvedDuration > 0 && clampedPosition >= resolvedDuration - 0.15) {
+            setIsPlaying(false);
+          }
+        }}
       />
       <View style={[styles.contentShiftWrap, contentShiftStyle]}>
         <View style={styles.infoDock}>
@@ -351,21 +561,31 @@ export default function PlayScreen({
         <View style={[styles.transportDock, { transform: [{ translateY: -140 - shallowStackLift }] }]}>
           <View style={styles.transportWrap}>
             <MusicPlayControlBar
-              currentSeconds={playbackSeconds}
+              currentSeconds={hasPlaybackStarted ? playbackSeconds : 0}
               isPlaying={isPlaying}
               onSeekChange={(nextSeconds) => {
-                const delta = nextSeconds - playbackSecondsRef.current;
+                const seekDeltaSeconds = nextSeconds - playbackSecondsRef.current;
+                setHasPlaybackStarted(true);
                 applyPlaybackSeconds(nextSeconds);
-                setDiscRotation(discRotationRef.current + delta * DISC_DEGREES_PER_SECOND);
+                setDiscRotation(
+                  discRotationRef.current + seekDeltaSeconds * DISC_DEGREES_PER_SECOND
+                );
+                spotifyPositionSecondsRef.current = nextSeconds;
+                spotifyPositionTimestampRef.current = Date.now();
+                if (spotifyMatch?.uri) {
+                  setPendingSeekSeconds(nextSeconds);
+                }
               }}
               onTogglePlay={() => {
                 void handleTogglePlayback();
               }}
+              emptyTimeMode={emptyTimeMode}
+              showEmptyTime={shouldShowEmptyTime}
               showPlayButton={false}
-              totalSeconds={PLAYBACK_DURATION_SECONDS}
+              totalSeconds={displayedTotalSeconds}
             />
             <View style={styles.actionRow}>
-              <Text
+              <Pressable
                 onPress={() => {
                   if (activeProject) {
                     if (activeProjectIsSaved) {
@@ -375,28 +595,35 @@ export default function PlayScreen({
                     }
                   }
                 }}
-                style={styles.transportActionText}
+                hitSlop={12}
+                style={styles.transportActionButton}
               >
-                {activeProjectIsSaved ? "-" : "+"}
-              </Text>
-              <Text
+                <AppIcon name={activeProjectIsSaved ? "minus" : "plus"} size={18} />
+              </Pressable>
+              <Pressable
                 onPress={() => {
                   void handleTogglePlayback();
                 }}
-                style={styles.transportActionText}
+                hitSlop={12}
+                style={styles.transportActionButton}
               >
-                {isPlaying ? "II" : "\u25B6"}
-              </Text>
-              <Text
+                <AppIcon
+                  name={isPreviewUnavailable ? "disable" : isPlaying ? "pause" : "play"}
+                  size={18}
+                  color={isPreviewUnavailable ? "#C62828" : "#111111"}
+                />
+              </Pressable>
+              <Pressable
                 onPress={() => {
                   if (activeProject) {
                     onPressGift?.(activeProject);
                   }
                 }}
-                style={styles.transportActionText}
+                hitSlop={12}
+                style={styles.transportActionButton}
               >
-                {"\uD83C\uDF81"}
-              </Text>
+                <AppIcon name="gift" size={18} />
+              </Pressable>
             </View>
           </View>
         </View>
@@ -578,16 +805,16 @@ const styles = StyleSheet.create({
   },
   trackTitle: {
     color: "#111111",
+    fontFamily: "Eurostile",
     fontSize: 22,
-    fontWeight: "600",
     textAlign: "center",
     maxWidth: "100%",
   },
   trackMeta: {
     marginTop: 4,
     color: "rgba(17,17,17,0.72)",
+    fontFamily: "Eurostile",
     fontSize: 14,
-    fontWeight: "500",
     textAlign: "center",
   },
   metaLabel: {
@@ -599,17 +826,16 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   actionRow: {
-    marginTop: 12,
+    marginTop: 20,
     width: 164,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  transportActionText: {
+  transportActionButton: {
     minWidth: 32,
-    color: "#111111",
-    fontSize: 18,
-    fontWeight: "500",
-    textAlign: "center",
+    minHeight: 24,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

@@ -1,16 +1,30 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 type SpotifyEmbedBridgeProps = {
   spotifyUri?: string | null;
-  shouldPlay: boolean;
+  loadIdentity?: string | null;
+  playbackCommand?: {
+    id: number;
+    type: "play" | "pause" | "resume";
+  } | null;
   debugVisible?: boolean;
+  seekToSeconds?: number | null;
+  onPlaybackUpdate?: (payload: {
+    durationSeconds: number;
+    positionSeconds: number;
+    isPaused: boolean;
+  }) => void;
 };
 
-function buildInjectedCommand(command: string, value?: string) {
+function buildInjectedCommand(command: string, value?: string | number) {
   const serializedValue =
-    typeof value === "string" ? JSON.stringify(value) : "undefined";
+    typeof value === "string"
+      ? JSON.stringify(value)
+      : typeof value === "number"
+        ? String(value)
+        : "undefined";
   return `
     (function() {
       if (window.spotifyBridge && typeof window.spotifyBridge.${command} === "function") {
@@ -23,10 +37,14 @@ function buildInjectedCommand(command: string, value?: string) {
 
 export default function SpotifyEmbedBridge({
   spotifyUri,
-  shouldPlay,
+  loadIdentity,
+  playbackCommand,
   debugVisible = false,
+  seekToSeconds,
+  onPlaybackUpdate,
 }: SpotifyEmbedBridgeProps) {
   const webViewRef = useRef<WebView>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
 
   const html = useMemo(
     () => `<!doctype html>
@@ -73,6 +91,9 @@ export default function SpotifyEmbedBridge({
               },
               togglePlay: function() {
                 window.spotifyController && window.spotifyController.togglePlay();
+              },
+              seek: function(seconds) {
+                window.spotifyController && window.spotifyController.seek(seconds);
               }
             };
 
@@ -87,6 +108,20 @@ export default function SpotifyEmbedBridge({
                 },
                 function(EmbedController) {
                   window.spotifyController = EmbedController;
+                  window.spotifyController.addListener("playback_update", function(event) {
+                    if (!window.ReactNativeWebView || !event || !event.data) {
+                      return;
+                    }
+
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: "playback_update",
+                      payload: {
+                        durationMs: Number(event.data.duration || 0),
+                        positionMs: Number(event.data.position || 0),
+                        isPaused: Boolean(event.data.isPaused),
+                      }
+                    }));
+                  });
                   if (window.pendingUri) {
                     window.spotifyController.loadUri(window.pendingUri);
                   }
@@ -100,18 +135,32 @@ export default function SpotifyEmbedBridge({
   );
 
   useEffect(() => {
-    if (!spotifyUri) {
+    if (!spotifyUri || !bridgeReady) {
       return;
     }
 
     webViewRef.current?.injectJavaScript(buildInjectedCommand("loadUri", spotifyUri));
-  }, [spotifyUri]);
+  }, [bridgeReady, loadIdentity, spotifyUri]);
 
   useEffect(() => {
+    if (!playbackCommand) {
+      return;
+    }
+
     webViewRef.current?.injectJavaScript(
-      buildInjectedCommand(shouldPlay ? "play" : "pause")
+      buildInjectedCommand(playbackCommand.type)
     );
-  }, [shouldPlay]);
+  }, [playbackCommand]);
+
+  useEffect(() => {
+    if (typeof seekToSeconds !== "number") {
+      return;
+    }
+
+    webViewRef.current?.injectJavaScript(
+      buildInjectedCommand("seek", seekToSeconds)
+    );
+  }, [seekToSeconds]);
 
   return (
     <View
@@ -123,6 +172,33 @@ export default function SpotifyEmbedBridge({
         allowsInlineMediaPlayback
         javaScriptEnabled
         mediaPlaybackRequiresUserAction={false}
+        onLoadStart={() => {
+          setBridgeReady(false);
+        }}
+        onLoadEnd={() => {
+          setBridgeReady(true);
+        }}
+        onMessage={(event) => {
+          try {
+            const parsed = JSON.parse(event.nativeEvent.data) as {
+              type?: string;
+              payload?: {
+                durationMs?: number;
+                positionMs?: number;
+                isPaused?: boolean;
+              };
+            };
+            if (parsed.type === "playback_update" && parsed.payload) {
+              onPlaybackUpdate?.({
+                durationSeconds: (parsed.payload.durationMs ?? 0) / 1000,
+                positionSeconds: (parsed.payload.positionMs ?? 0) / 1000,
+                isPaused: parsed.payload.isPaused ?? true,
+              });
+            }
+          } catch {
+            // Ignore malformed bridge messages.
+          }
+        }}
         originWhitelist={["*"]}
         source={{ html }}
         style={[styles.hiddenWebView, debugVisible ? styles.debugWebView : null]}

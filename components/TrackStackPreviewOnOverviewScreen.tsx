@@ -8,9 +8,8 @@ import Animated, {
 import type { TrackStack } from "../data/trackStacks";
 import { getPreviewPressableHeight, getPreviewStackOffset } from "../lib/trackWorldLayout";
 
-const PARALLAX_MAX_SHIFT = 48;
-const PARALLAX_MAX_ROTATION = 3;
-const PARALLAX_MAX_SHIFT_X = 7;
+const PARALLAX_MAX_SHIFT = 40;
+const PARALLAX_MAX_SHIFT_X = 6;
 
 function hashString(value: string) {
   let hash = 2166136261;
@@ -29,18 +28,14 @@ export function getPreviewJitter(stackId: string, layerIndex: number, size: numb
   const seedBase = hashString(`${stackId}-${layerIndex}`);
   const x = (randomFromSeed(seedBase) - 0.5) * size * 0.12;
   const y = (randomFromSeed(seedBase * 3) - 0.5) * size * 0.05;
-  const rotate = (randomFromSeed(seedBase * 7) - 0.5) * 6;
+  const rotate = 0;
   return { x, y, rotate };
 }
 
 export function getPreviewParallaxRotation(stackLeft: number, viewportWidth: number) {
-  const viewportCenterX = viewportWidth / 2;
-  const horizontalDistance = stackLeft - viewportCenterX;
-  const normalizedHorizontalDistance = horizontalDistance / Math.max(1, viewportWidth / 2);
-  return Math.max(
-    -PARALLAX_MAX_ROTATION,
-    Math.min(PARALLAX_MAX_ROTATION, normalizedHorizontalDistance * PARALLAX_MAX_ROTATION)
-  );
+  void stackLeft;
+  void viewportWidth;
+  return 0;
 }
 
 function getStackParallaxVariance(stackId: string) {
@@ -109,10 +104,8 @@ export function getPreviewLayerSnapshot({
   const jitter = getPreviewJitter(stackId, layerIndex, size);
   const layerParallaxVariance = getLayerParallaxVariance(stackId, layerIndex);
   const layerParallaxXBias = getLayerParallaxXBias(stackId, layerIndex);
-  const layerRotationBias = getLayerParallaxRotationBias(stackId, layerIndex);
   const xDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "x");
   const yDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "y");
-  const rotationDirectionalResponse = getDirectionalParallaxResponse(stackId, layerIndex, "rotate");
   const stackParallaxVariance = getStackParallaxVariance(stackId);
   const stackParallaxXBias = getStackParallaxXBias(stackId);
   const cardCenterY = stackTop + baseTranslateY + jitter.y + size / 2 - scrollY;
@@ -127,8 +120,6 @@ export function getPreviewLayerSnapshot({
   const columnFactor = 1 + normalizedHorizontalDistance * 0.32;
   const xDirectionFactor = normalizedDistance < 0 ? xDirectionalResponse.negative : xDirectionalResponse.positive;
   const yDirectionFactor = normalizedDistance < 0 ? yDirectionalResponse.negative : yDirectionalResponse.positive;
-  const rotationDirectionFactor =
-    normalizedDistance < 0 ? rotationDirectionalResponse.negative : rotationDirectionalResponse.positive;
   const xBias = stackParallaxXBias + layerParallaxXBias;
   const parallaxX = Math.max(
     -PARALLAX_MAX_SHIFT_X,
@@ -156,18 +147,10 @@ export function getPreviewLayerSnapshot({
         * yDirectionFactor
     )
   );
-  const parallaxRotate = Math.max(
-    -PARALLAX_MAX_ROTATION,
-    Math.min(
-      PARALLAX_MAX_ROTATION,
-      normalizedHorizontalDistance * PARALLAX_MAX_ROTATION * rotationDirectionFactor + layerRotationBias
-    )
-  );
-
   return {
     translateX: jitter.x + parallaxX,
     translateY: baseTranslateY + jitter.y + parallaxY,
-    rotateDeg: jitter.rotate + parallaxRotate,
+    rotateDeg: 0,
   };
 }
 
@@ -213,10 +196,13 @@ function PreviewLayerShell({
     const remaining = 1 - progress;
 
     return {
+      opacity: rel === 0 ? 1 : remaining,
       transform: [
-        { translateX: jitter.x * remaining + tiltX.value * depthFactor },
-        { translateY: baseTranslateY + jitter.y + tiltY.value * depthFactor },
-        { rotate: `${jitter.rotate * remaining}deg` },
+        { translateX: (jitter.x + tiltX.value * depthFactor) * remaining },
+        {
+          translateY:
+            (baseTranslateY + jitter.y + tiltY.value * depthFactor) * remaining,
+        },
       ],
     };
   }, [baseTranslateY, depthFactor, jitter, straightenProgress, tiltX, tiltY]);
@@ -255,10 +241,8 @@ function PreviewImageLayer({
   stackParallaxXBias,
   layerParallaxVariance,
   layerParallaxXBias,
-  layerRotationBias,
   xDirectionalResponse,
   yDirectionalResponse,
-  rotationDirectionalResponse,
   onLoadEnd,
 }: {
   rel: number;
@@ -275,10 +259,8 @@ function PreviewImageLayer({
   stackParallaxXBias: number;
   layerParallaxVariance: number;
   layerParallaxXBias: number;
-  layerRotationBias: number;
   xDirectionalResponse: { negative: number; positive: number };
   yDirectionalResponse: { negative: number; positive: number };
-  rotationDirectionalResponse: { negative: number; positive: number };
   onLoadEnd: () => void;
 }) {
   const [useFallbackSource, setUseFallbackSource] = useState(false);
@@ -302,8 +284,6 @@ function PreviewImageLayer({
     const columnFactor = 1 + normalizedHorizontalDistance * 0.32;
     const xDirectionFactor = normalizedDistance < 0 ? xDirectionalResponse.negative : xDirectionalResponse.positive;
     const yDirectionFactor = normalizedDistance < 0 ? yDirectionalResponse.negative : yDirectionalResponse.positive;
-    const rotationDirectionFactor =
-      normalizedDistance < 0 ? rotationDirectionalResponse.negative : rotationDirectionalResponse.positive;
     const xBias = stackParallaxXBias + layerParallaxXBias;
     const translateImageX = Math.max(
       -PARALLAX_MAX_SHIFT_X,
@@ -331,25 +311,15 @@ function PreviewImageLayer({
           * yDirectionFactor
       )
     );
-    const rotateZ = Math.max(
-      -PARALLAX_MAX_ROTATION,
-      Math.min(
-        PARALLAX_MAX_ROTATION,
-        normalizedHorizontalDistance * PARALLAX_MAX_ROTATION * rotationDirectionFactor + layerRotationBias
-      )
-    );
-
     return {
       transform: [
         { translateX: translateImageX * remaining },
         { translateY: translateImageY },
-        { rotate: `${rotateZ * remaining}deg` },
       ],
     };
   }, [
     layerParallaxVariance,
     layerParallaxXBias,
-    layerRotationBias,
     rel,
     scrollY,
     stackLeft,
@@ -359,7 +329,6 @@ function PreviewImageLayer({
     straightenProgress,
     viewportHeight,
     viewportWidth,
-    rotationDirectionalResponse,
     xDirectionalResponse,
     yDirectionalResponse,
   ]);
@@ -407,7 +376,7 @@ function TrackStackPreviewOnOverviewScreen({
   const frontLayerReportedRef = useRef(false);
   const stackParallaxVariance = useRef(getStackParallaxVariance(stack.id)).current;
   const stackParallaxXBias = useRef(getStackParallaxXBias(stack.id)).current;
-  const stackBaseZIndex = Math.round(stackTop + stackHeight) * 10;
+  const stackBaseZIndex = Math.round((viewportHeight - (stackTop + stackHeight)) * 10) + 10000;
 
   useEffect(() => {
     frontLayerReportedRef.current = false;
@@ -435,10 +404,8 @@ function TrackStackPreviewOnOverviewScreen({
           const jitter = getPreviewJitter(stack.id, rel, size);
           const layerParallaxVariance = getLayerParallaxVariance(stack.id, rel);
           const layerParallaxXBias = getLayerParallaxXBias(stack.id, rel);
-          const layerRotationBias = getLayerParallaxRotationBias(stack.id, rel);
           const xDirectionalResponse = getDirectionalParallaxResponse(stack.id, rel, "x");
           const yDirectionalResponse = getDirectionalParallaxResponse(stack.id, rel, "y");
-          const rotationDirectionalResponse = getDirectionalParallaxResponse(stack.id, rel, "rotate");
 
           return (
             <PreviewLayerShell
@@ -467,10 +434,8 @@ function TrackStackPreviewOnOverviewScreen({
                   stackParallaxXBias={stackParallaxXBias}
                   layerParallaxVariance={layerParallaxVariance}
                   layerParallaxXBias={layerParallaxXBias}
-                  layerRotationBias={layerRotationBias}
                   xDirectionalResponse={xDirectionalResponse}
                   yDirectionalResponse={yDirectionalResponse}
-                  rotationDirectionalResponse={rotationDirectionalResponse}
                   onLoadEnd={() => {
                     if (rel === 0 && !frontLayerReportedRef.current) {
                       frontLayerReportedRef.current = true;
@@ -495,10 +460,10 @@ const styles = StyleSheet.create({
   previewLayer: {
     position: "absolute",
     shadowColor: "#000000",
-    shadowOpacity: 0.16,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   previewImage: {
     position: "absolute",

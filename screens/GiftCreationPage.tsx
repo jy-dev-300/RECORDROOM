@@ -8,6 +8,7 @@ import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated";
+import AppIcon from "../components/AppIcon";
 import type { Stack } from "../components/Stack";
 import PlayerDisc from "../components/PlayerDisc";
 
@@ -15,6 +16,7 @@ type GiftCreationPageProps = {
   projects: Stack[];
   giftMessage: string;
   onPressComposeMessage: () => void;
+  startIntro?: boolean;
 };
 
 const PLASTIC_WRAP_SOURCE = require("../assets/bestplastic.png");
@@ -22,6 +24,7 @@ export default function GiftCreationPage({
   projects,
   giftMessage,
   onPressComposeMessage,
+  startIntro = true,
 }: GiftCreationPageProps) {
   const giftLink = "https://recordroom.app/gift";
   const { width, height } = useWindowDimensions();
@@ -42,56 +45,75 @@ export default function GiftCreationPage({
     idleFloat.setValue(0);
     idleDrift.setValue(0);
 
-    Animated.sequence([
-      Animated.timing(discProgress, {
-        toValue: 1,
-        duration: 950,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(wrapProgress, {
-        toValue: 1,
-        duration: 760,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }),
-    ]).start(() => {
-      Animated.parallel([
-        Animated.loop(
-        Animated.sequence([
-          Animated.timing(idleFloat, {
-            toValue: 1,
-            duration: 2200,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-          Animated.timing(idleFloat, {
-            toValue: 0,
-            duration: 2400,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-        ])
-        ),
-        Animated.loop(
-          Animated.sequence([
-            Animated.timing(idleDrift, {
-              toValue: 1,
-              duration: 2900,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(idleDrift, {
-              toValue: 0,
-              duration: 2700,
-              easing: Easing.inOut(Easing.quad),
-              useNativeDriver: true,
-            }),
-          ])
-        ),
-      ]).start();
-    });
-  }, [discProgress, wrapProgress, idleDrift, idleFloat, activeProject?.id]);
+    if (!startIntro) {
+      return () => {
+        discProgress.stopAnimation();
+        wrapProgress.stopAnimation();
+        idleFloat.stopAnimation();
+        idleDrift.stopAnimation();
+      };
+    }
+
+    const startTimeout = setTimeout(() => {
+      Animated.sequence([
+        Animated.timing(discProgress, {
+          toValue: 1,
+          duration: 1180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(wrapProgress, {
+          toValue: 1,
+          duration: 920,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+      ]).start(() => {
+        Animated.parallel([
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(idleFloat, {
+                toValue: 1,
+                duration: 2200,
+                easing: Easing.inOut(Easing.sin),
+                useNativeDriver: true,
+              }),
+              Animated.timing(idleFloat, {
+                toValue: 0,
+                duration: 2400,
+                easing: Easing.inOut(Easing.sin),
+                useNativeDriver: true,
+              }),
+            ])
+          ),
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(idleDrift, {
+                toValue: 1,
+                duration: 2900,
+                easing: Easing.inOut(Easing.quad),
+                useNativeDriver: true,
+              }),
+              Animated.timing(idleDrift, {
+                toValue: 0,
+                duration: 2700,
+                easing: Easing.inOut(Easing.quad),
+                useNativeDriver: true,
+              }),
+            ])
+          ),
+        ]).start();
+      });
+    }, 0);
+
+    return () => {
+      clearTimeout(startTimeout);
+      discProgress.stopAnimation();
+      wrapProgress.stopAnimation();
+      idleFloat.stopAnimation();
+      idleDrift.stopAnimation();
+    };
+  }, [discProgress, wrapProgress, idleDrift, idleFloat, activeProject?.id, startIntro]);
 
   const sleeveSize = Math.min(width * 0.5566, 319);
   const discSize = sleeveSize * 0.99;
@@ -304,10 +326,10 @@ export default function GiftCreationPage({
 
         <View style={styles.actionRow}>
           <Pressable onPress={handleCopyLink} style={styles.iconButton}>
-            <Text style={styles.iconGlyph}>{"\uD83D\uDD17"}</Text>
+            <AppIcon name="link-alt" size={20} />
           </Pressable>
           <Pressable onPress={handleShare} style={styles.iconButton}>
-            <Text style={styles.iconGlyph}>{"\u2934"}</Text>
+            <AppIcon name="share" size={20} />
           </Pressable>
         </View>
       </View>
@@ -428,23 +450,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  iconGlyph: {
-    color: "#111111",
-    fontSize: 21,
-    lineHeight: 24,
-  },
   trackTitle: {
     color: "#111111",
+    fontFamily: "Eurostile",
     fontSize: 22,
-    fontWeight: "600",
     textAlign: "center",
     maxWidth: "100%",
   },
   trackMeta: {
     marginTop: 4,
     color: "rgba(17,17,17,0.72)",
+    fontFamily: "Eurostile",
     fontSize: 14,
-    fontWeight: "500",
     textAlign: "center",
   },
   metaLabel: {

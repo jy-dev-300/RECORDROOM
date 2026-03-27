@@ -9,6 +9,16 @@ export const PREVIEW_STRIP_FALLOFF = 0.76;
 export const EDGE_BACK_ZONE = 64;
 export const EDGE_BACK_TRIGGER = 40;
 export const OVERVIEW_VERTICAL_SHIFT_RATIO = 0.02;
+const OVERVIEW_SIDE_GUTTER_RATIO_PHONE = 0.055;
+const OVERVIEW_SIDE_GUTTER_RATIO_TABLET = 0.07;
+const OVERVIEW_INTER_COLUMN_GAP_RATIO_PHONE = 0.09;
+const OVERVIEW_INTER_COLUMN_GAP_RATIO_TABLET = 0.024;
+const OVERVIEW_ROW_GAP_RATIO_PHONE = 0.0095;
+const OVERVIEW_ROW_GAP_RATIO_TABLET = 0.012;
+const OVERVIEW_PREVIEW_SIZE_RATIO_PHONE = 0.33;
+const OVERVIEW_PREVIEW_SIZE_RATIO_TABLET = 0.24;
+const OVERVIEW_MAX_ROW_HEIGHT_RATIO_PHONE = 0.2;
+const OVERVIEW_MAX_ROW_HEIGHT_RATIO_TABLET = 0.24;
 
 export type StackFrame = {
   index: number;
@@ -122,37 +132,45 @@ export function buildTrackWorldLayout(width: number, height: number): TrackWorld
   const isTabletLike = width >= 768;
   const viewportWidth = width;
   const viewportHeight = height;
-  const internalRowGapY = isTabletLike ? 10 : 8;
+  const sideGutter = Math.round(
+    viewportWidth * (isTabletLike ? OVERVIEW_SIDE_GUTTER_RATIO_TABLET : OVERVIEW_SIDE_GUTTER_RATIO_PHONE)
+  );
+  const sectionGapX = Math.round(
+    viewportWidth
+      * (isTabletLike ? OVERVIEW_INTER_COLUMN_GAP_RATIO_TABLET : OVERVIEW_INTER_COLUMN_GAP_RATIO_PHONE)
+  );
+  const internalRowGapY = Math.round(
+    viewportHeight * (isTabletLike ? OVERVIEW_ROW_GAP_RATIO_TABLET : OVERVIEW_ROW_GAP_RATIO_PHONE)
+  );
   const sectionGapY = internalRowGapY;
   const sectionInnerPadding = 0;
   const stackGapX = isTabletLike ? 7 : 5;
-  const baseSectionGapX = stackGapX / 2;
-  const sectionGapX = baseSectionGapX - 30;
-
-  const sectionWidth = (viewportWidth - baseSectionGapX) / 2;
-  const usableSectionWidth = sectionWidth - sectionInnerPadding * 2;
   const minPreview = isTabletLike ? 144 : 80;
   const maxPreview = isTabletLike ? 288 : 144;
-  let previewSize = clamp(
-    Math.floor((usableSectionWidth - stackGapX * (STACKS_PER_ROW - 1)) / STACKS_PER_ROW),
-    minPreview,
-    maxPreview
-  );
+  const previewSizeRatio = isTabletLike
+    ? OVERVIEW_PREVIEW_SIZE_RATIO_TABLET
+    : OVERVIEW_PREVIEW_SIZE_RATIO_PHONE;
+  let previewSize = clamp(Math.floor(viewportWidth * previewSizeRatio), minPreview, maxPreview);
 
-  const maxRowHeight = viewportHeight * 0.42;
+  const maxRowHeight =
+    viewportHeight * (isTabletLike ? OVERVIEW_MAX_ROW_HEIGHT_RATIO_TABLET : OVERVIEW_MAX_ROW_HEIGHT_RATIO_PHONE);
   while (previewSize > minPreview && getPreviewPressableHeight(previewSize) > maxRowHeight) {
     previewSize -= 1;
   }
-  previewSize = Math.max(1, Math.floor(previewSize * 0.9));
+  const maxPreviewWidthFromViewport = Math.floor(
+    (viewportWidth - sideGutter * 2 - sectionGapX) / SECTIONS_PER_ROW
+  );
+  previewSize = Math.min(previewSize, maxPreviewWidthFromViewport);
 
+  const sectionWidth = previewSize;
   const rowHeight = getPreviewPressableHeight(previewSize);
   const sectionHeight = sectionInnerPadding * 2 + rowHeight;
   const megaBlockWidth = sectionWidth * 2 + sectionGapX;
   const megaBlockHeight = sectionHeight * 16 + sectionGapY * 15;
 
-  const worldWidth = Math.max(viewportWidth, megaBlockWidth);
+  const worldWidth = viewportWidth;
   const worldHeight = Math.max(viewportHeight, megaBlockHeight);
-  const megaBlockLeft = (worldWidth - megaBlockWidth) / 2;
+  const megaBlockLeft = sideGutter;
   const megaBlockTop = 0;
 
   const detailStackWidth = clamp(width * 0.72, 240, 340);

@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   PanResponder,
   Pressable,
   StyleSheet,
   Text,
   View,
+  type View as ViewType,
   type LayoutChangeEvent,
 } from "react-native";
+import AppIcon from "./AppIcon";
 
 type MusicPlayControlBarProps = {
   totalSeconds?: number;
@@ -15,6 +18,8 @@ type MusicPlayControlBarProps = {
   onTogglePlay?: () => void;
   onSeekChange?: (seconds: number) => void;
   showPlayButton?: boolean;
+  showEmptyTime?: boolean;
+  emptyTimeMode?: "both" | "right-only";
 };
 
 function formatTime(totalSeconds: number) {
@@ -35,12 +40,20 @@ export default function MusicPlayControlBar({
   onTogglePlay,
   onSeekChange,
   showPlayButton = true,
+  showEmptyTime = false,
+  emptyTimeMode = "both",
 }: MusicPlayControlBarProps) {
   const [internalIsPlaying, setInternalIsPlaying] = useState(false);
   const [internalProgressSeconds, setInternalProgressSeconds] = useState(0);
   const [trackWidth, setTrackWidth] = useState(0);
+  const [dragProgressSeconds, setDragProgressSeconds] = useState<number | null>(null);
+  const progressAnimated = useRef(new Animated.Value(0)).current;
+  const isScrubbingRef = useRef(false);
+  const seekTrackRef = useRef<ViewType>(null);
+  const trackPageXRef = useRef(0);
   const resolvedIsPlaying = isPlaying ?? internalIsPlaying;
-  const progressSeconds = currentSeconds ?? internalProgressSeconds;
+  const baseProgressSeconds = currentSeconds ?? internalProgressSeconds;
+  const progressSeconds = dragProgressSeconds ?? baseProgressSeconds;
 
   useEffect(() => {
     if (typeof currentSeconds === "number" || typeof isPlaying === "boolean") {
@@ -64,13 +77,60 @@ export default function MusicPlayControlBar({
   }, [currentSeconds, internalIsPlaying, isPlaying, totalSeconds]);
 
   const progressRatio = totalSeconds <= 0 ? 0 : clamp(progressSeconds / totalSeconds, 0, 1);
-  const elapsedLabel = useMemo(() => formatTime(progressSeconds), [progressSeconds]);
-  const totalLabel = useMemo(() => formatTime(totalSeconds), [totalSeconds]);
+  const shouldShowEmptyTime = showEmptyTime;
+  const elapsedLabel = useMemo(
+    () =>
+      shouldShowEmptyTime
+        ? emptyTimeMode === "right-only"
+          ? "0:00"
+          : "--:--"
+        : formatTime(progressSeconds),
+    [emptyTimeMode, progressSeconds, shouldShowEmptyTime]
+  );
+  const totalLabel = useMemo(
+    () => (shouldShowEmptyTime ? "--:--" : formatTime(totalSeconds)),
+    [shouldShowEmptyTime, totalSeconds]
+  );
+
+  useEffect(() => {
+    if (dragProgressSeconds == null || isScrubbingRef.current) {
+      return;
+    }
+
+    if (Math.abs(baseProgressSeconds - dragProgressSeconds) <= 0.35) {
+      setDragProgressSeconds(null);
+    }
+  }, [baseProgressSeconds, dragProgressSeconds]);
+
+  useEffect(() => {
+    if (isScrubbingRef.current) {
+      progressAnimated.setValue(shouldShowEmptyTime ? 0 : progressRatio);
+      return;
+    }
+
+    progressAnimated.stopAnimation();
+    Animated.timing(progressAnimated, {
+      toValue: shouldShowEmptyTime ? 0 : progressRatio,
+      duration: 45,
+      useNativeDriver: false,
+    }).start();
+  }, [progressAnimated, progressRatio, shouldShowEmptyTime]);
+
+  const animatedFillWidth = progressAnimated.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, trackWidth],
+  });
+  const animatedThumbTranslateX = progressAnimated.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-7, Math.max(-7, trackWidth - 7)],
+  });
 
   const updateProgressFromOffset = (offsetX: number) => {
     if (trackWidth <= 0) return;
     const ratio = clamp(offsetX / trackWidth, 0, 1);
     const nextSeconds = ratio * totalSeconds;
+    setDragProgressSeconds(nextSeconds);
+    progressAnimated.setValue(ratio);
     if (typeof currentSeconds === "number") {
       onSeekChange?.(nextSeconds);
     } else {
@@ -79,16 +139,34 @@ export default function MusicPlayControlBar({
     }
   };
 
+  const syncTrackPageX = () => {
+    seekTrackRef.current?.measureInWindow((x) => {
+      trackPageXRef.current = x;
+    });
+  };
+
+  const updateProgressFromPageX = (pageX: number) => {
+    updateProgressFromOffset(pageX - trackPageXRef.current);
+  };
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (event) => {
-          updateProgressFromOffset(event.nativeEvent.locationX);
+          isScrubbingRef.current = true;
+          syncTrackPageX();
+          updateProgressFromPageX(event.nativeEvent.pageX);
         },
-        onPanResponderMove: (event) => {
-          updateProgressFromOffset(event.nativeEvent.locationX);
+        onPanResponderMove: (_, gestureState) => {
+          updateProgressFromPageX(gestureState.moveX);
+        },
+        onPanResponderRelease: () => {
+          isScrubbingRef.current = false;
+        },
+        onPanResponderTerminate: () => {
+          isScrubbingRef.current = false;
         },
       }),
     [totalSeconds, trackWidth]
@@ -96,6 +174,7 @@ export default function MusicPlayControlBar({
 
   const handleTrackLayout = (event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    syncTrackPageX();
   };
 
   const handleTogglePlay = () => {
@@ -120,13 +199,24 @@ export default function MusicPlayControlBar({
       <View style={styles.seekArea}>
         <View style={styles.timeRow}>
           <Text style={styles.timeText}>{elapsedLabel}</Text>
-          <View style={styles.timeDivider} />
+          {shouldShowEmptyTime ? (
+            <Text style={styles.timeText}> | </Text>
+          ) : (
+            <View style={styles.timeDivider} />
+          )}
           <Text style={styles.timeText}>{totalLabel}</Text>
         </View>
-        <View onLayout={handleTrackLayout} style={styles.seekTrack} {...panResponder.panHandlers}>
+        <View
+          ref={seekTrackRef}
+          onLayout={handleTrackLayout}
+          style={styles.seekTrack}
+          {...panResponder.panHandlers}
+        >
           <View style={styles.seekTrackBase} />
-          <View style={[styles.seekFill, { width: `${progressRatio * 100}%` }]} />
-          <View style={[styles.seekThumb, { left: `${progressRatio * 100}%` }]} />
+          <Animated.View style={[styles.seekFill, { width: animatedFillWidth }]} />
+          <Animated.View
+            style={[styles.seekThumb, { transform: [{ translateX: animatedThumbTranslateX }] }]}
+          />
         </View>
       </View>
 
@@ -134,14 +224,7 @@ export default function MusicPlayControlBar({
         <View style={styles.buttonRow}>
           <Pressable onPress={handleTogglePlay} style={styles.playButton}>
             <View style={styles.playButtonInner}>
-              {resolvedIsPlaying ? (
-                <>
-                  <View style={[styles.pauseBar, styles.pauseBarLeft]} />
-                  <View style={[styles.pauseBar, styles.pauseBarRight]} />
-                </>
-              ) : (
-                <View style={styles.playTriangle} />
-              )}
+              <AppIcon name={resolvedIsPlaying ? "pause" : "play"} size={20} />
             </View>
           </Pressable>
         </View>
@@ -170,8 +253,8 @@ const styles = StyleSheet.create({
   },
   timeText: {
     color: "rgba(17,17,17,0.72)",
-    fontSize: 12,
-    fontWeight: "500",
+    fontFamily: "Eurostile",
+    fontSize: 14,
   },
   timeDivider: {
     width: 1,
@@ -200,7 +283,7 @@ const styles = StyleSheet.create({
   },
   seekThumb: {
     position: "absolute",
-    marginLeft: -7,
+    left: 0,
     width: 14,
     height: 14,
     borderRadius: 7,
@@ -223,29 +306,5 @@ const styles = StyleSheet.create({
     height: 18,
     alignItems: "center",
     justifyContent: "center",
-  },
-  playTriangle: {
-    width: 0,
-    height: 0,
-    marginLeft: 3,
-    borderTopWidth: 9,
-    borderBottomWidth: 9,
-    borderLeftWidth: 15,
-    borderTopColor: "transparent",
-    borderBottomColor: "transparent",
-    borderLeftColor: "#111111",
-  },
-  pauseBar: {
-    position: "absolute",
-    width: 4,
-    height: 16,
-    borderRadius: 2,
-    backgroundColor: "#111111",
-  },
-  pauseBarLeft: {
-    left: 3,
-  },
-  pauseBarRight: {
-    right: 3,
   },
 });

@@ -3,13 +3,15 @@ import type { TrackStack } from "../data/trackStacks";
 import type { TrackWorldLayout } from "../lib/trackWorldLayout";
 import TracksOverviewScreen from "./TracksOverviewScreen";
 
-type MyTracksScreenProps = {
+type SavedTracksScreenProps = {
   layout: TrackWorldLayout;
   sections: TrackStack[][];
   accountLabel?: string;
   previewRevealPrimed?: boolean;
   initialScrollOffset?: number;
   onBack: () => void;
+  onPressAllTracks?: () => void;
+  onPressLoadingDebug?: () => void;
   sortOptions?: Array<{
     id: string;
     label: string;
@@ -25,30 +27,37 @@ type MyTracksScreenProps = {
   ) => void;
 };
 
-export default function MyTracksScreen({
+export default function SavedTracksScreen({
   layout,
   sections,
   accountLabel,
   previewRevealPrimed = false,
   initialScrollOffset = 0,
   onBack,
+  onPressAllTracks,
+  onPressLoadingDebug,
   sortOptions,
   onPreviewRevealPrimed,
   onScrollOffsetChange,
   onPressStack,
-}: MyTracksScreenProps) {
+}: SavedTracksScreenProps) {
+  const extraContentTopPadding = Math.round(layout.viewportHeight * 0.03);
+
   return (
     <TracksOverviewScreen
       layout={layout}
       sections={sections}
       accountLabel={accountLabel}
       previewRevealPrimed={previewRevealPrimed}
-      isMyTracksView
       onBack={onBack}
+      onPressAllTracks={onPressAllTracks}
+      onPressLoadingDebug={onPressLoadingDebug}
       initialScrollOffset={initialScrollOffset}
       sortOptions={sortOptions}
       onPreviewRevealPrimed={onPreviewRevealPrimed}
       onScrollOffsetChange={onScrollOffsetChange}
+      screenTitle="Saved Tracks"
+      extraContentTopPadding={extraContentTopPadding}
       onPressStack={onPressStack}
     />
   );
